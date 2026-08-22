@@ -15,6 +15,7 @@ const board = $("#board");
 const header = $("#header");
 const search = $<HTMLInputElement>("#search");
 const btnAdd = $("#btn-add");
+const btnGear = $("#btn-gear");
 const btnPin = $("#btn-pin");
 const btnCollapse = $("#btn-collapse");
 const pill = $("#pill");
@@ -615,6 +616,54 @@ btnPin.onclick = () => {
   state.settings.pinned = next;
   btnPin.classList.toggle("active", next);
   void invoke("set_pinned", { pin: next });
+};
+
+let opacitySaveTimer = 0;
+
+btnGear.onclick = (ev) => {
+  const wasOpen = document.querySelector(".opacity-pop");
+  closeMenus();
+  if (wasOpen) return;
+  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+
+  const pop = document.createElement("div");
+  pop.className = "ctx opacity-pop";
+  pop.style.left = `${rect.right - 200}px`;
+  pop.style.top = `${rect.bottom + 6}px`;
+
+  const head = document.createElement("div");
+  head.className = "opacity-head";
+  const title = document.createElement("span");
+  title.textContent = "面板透明度";
+  const val = document.createElement("span");
+  val.className = "opacity-val";
+  head.append(title, val);
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "opacity-slider";
+  slider.min = "0.30";
+  slider.max = "0.85";
+  slider.step = "0.01";
+
+  let current = state.settings.bgOpacity ?? 0.55;
+  current = Math.min(0.85, Math.max(0.3, current));
+  slider.value = String(current);
+  val.textContent = `${Math.round(current * 100)}%`;
+
+  slider.oninput = () => {
+    current = parseFloat(slider.value);
+    applyPanelAlpha(current);
+    val.textContent = `${Math.round(current * 100)}%`;
+    window.clearTimeout(opacitySaveTimer);
+    opacitySaveTimer = window.setTimeout(() => {
+      state.settings.bgOpacity = current;
+      void invoke("set_bg_opacity", { opacity: current });
+    }, 250);
+  };
+
+  pop.append(head, slider);
+  document.body.appendChild(pop);
 };
 
 btnCollapse.onclick = () => {

@@ -113,6 +113,31 @@ body {
   border-color: rgba(255, 184, 77, 0.4);
 }
 
+.opacity-pop {
+  width: 200px;
+  padding: 12px 14px 10px;
+}
+
+.opacity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.opacity-val {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.opacity-slider {
+  width: 100%;
+  height: 4px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 #search-wrap {
   flex: 1;
   display: flex;

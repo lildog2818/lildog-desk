@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent};
 
@@ -208,13 +208,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let show_item = MenuItem::with_id(app, "show", "显示 / 隐藏", true, None::<&str>)?;
-    let op_thin = MenuItem::with_id(app, "op-thin", "较透明", true, None::<&str>)?;
-    let op_mid = MenuItem::with_id(app, "op-mid", "适中", true, None::<&str>)?;
-    let op_solid = MenuItem::with_id(app, "op-solid", "较实", true, None::<&str>)?;
-    let opacity_menu =
-        Submenu::with_items(app, "面板透明度", true, &[&op_thin, &op_mid, &op_solid])?;
     let pin_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &opacity_menu, &pin_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &pin_item])?;
 
     tauri::tray::TrayIconBuilder::with_id("tray")
         .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
@@ -227,9 +222,6 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 save_pos_now(app);
                 app.exit(0);
             }
-            "op-thin" => apply_bg_opacity(app, 0.35),
-            "op-mid" => apply_bg_opacity(app, 0.55),
-            "op-solid" => apply_bg_opacity(app, 0.78),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -266,6 +258,12 @@ fn apply_bg_opacity(app: &AppHandle, v: f64) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.emit("bg-opacity", v);
     }
+}
+
+#[tauri::command]
+fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
+    apply_bg_opacity(&app, opacity.clamp(0.30, 0.85));
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -306,7 +304,8 @@ pub fn run() {
             open_target,
             reveal_target,
             set_pinned,
-            set_collapsed
+            set_collapsed,
+            set_bg_opacity
         ])
         .setup(setup)
         .on_window_event(|window, event| match event {
