@@ -158,6 +158,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = apply_acrylic(&win, Some((18, 18, 24, 96))) {
             eprintln!("acrylic unavailable: {e}");
         }
+        round_window_corners(&win);
     }
 
     if let (Some(x), Some(y)) = (settings.x, settings.y) {
@@ -216,6 +217,32 @@ fn toggle_visible(app: &AppHandle) {
         } else {
             let _ = win.show();
             let _ = win.set_focus();
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn round_window_corners(win: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DWM_WINDOW_CORNER_PREFERENCE,
+    };
+
+    let Ok(raw) = win.hwnd() else {
+        return;
+    };
+    let hwnd = HWND(raw.0);
+    let pref: DWM_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND;
+    unsafe {
+        let hr = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const _ as *const _,
+            std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        );
+        if hr.is_err() {
+            eprintln!("corner preference failed: {:?}", hr);
         }
     }
 }
