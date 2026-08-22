@@ -290,7 +290,8 @@ body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: break-word;
   text-align: center;
   color: var(--text);
 }
