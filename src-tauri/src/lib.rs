@@ -6,12 +6,9 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState};
-use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow,
-    WindowEvent,
-};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent};
 
 #[derive(Default)]
 struct AppState {
@@ -179,8 +176,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let show_item = MenuItem::with_id(app, "show", "显示 / 隐藏", true, None::<&str>)?;
+    let op_thin = MenuItem::with_id(app, "op-thin", "较透明", true, None::<&str>)?;
+    let op_mid = MenuItem::with_id(app, "op-mid", "适中", true, None::<&str>)?;
+    let op_solid = MenuItem::with_id(app, "op-solid", "较实", true, None::<&str>)?;
+    let opacity_menu =
+        Submenu::with_items(app, "面板透明度", true, &[&op_thin, &op_mid, &op_solid])?;
     let pin_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &pin_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &opacity_menu, &pin_item])?;
 
     tauri::tray::TrayIconBuilder::with_id("tray")
         .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
@@ -193,6 +195,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 save_pos_now(app);
                 app.exit(0);
             }
+            "op-thin" => apply_bg_opacity(app, 0.35),
+            "op-mid" => apply_bg_opacity(app, 0.55),
+            "op-solid" => apply_bg_opacity(app, 0.78),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -218,6 +223,16 @@ fn toggle_visible(app: &AppHandle) {
             let _ = win.show();
             let _ = win.set_focus();
         }
+    }
+}
+
+fn apply_bg_opacity(app: &AppHandle, v: f64) {
+    let dir = storage::data_dir(app);
+    let mut s = storage::load_settings(&dir);
+    s.bg_opacity = v;
+    storage::save_settings(&dir, &s);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.emit("bg-opacity", v);
     }
 }
 

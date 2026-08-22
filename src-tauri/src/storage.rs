@@ -59,6 +59,12 @@ pub struct WinSettings {
     pub width: Option<f64>,
     #[serde(default)]
     pub height: Option<f64>,
+    #[serde(default = "default_bg_opacity")]
+    pub bg_opacity: f64,
+}
+
+fn default_bg_opacity() -> f64 {
+    0.55
 }
 
 impl Default for WinSettings {
@@ -70,6 +76,7 @@ impl Default for WinSettings {
             collapsed: false,
             width: None,
             height: None,
+            bg_opacity: 0.55,
         }
     }
 }

@@ -20,6 +20,7 @@ export interface Group {
 interface Settings {
   pinned: boolean;
   collapsed: boolean;
+  bgOpacity?: number;
 }
 
 export const state = {

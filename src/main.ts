@@ -4,6 +4,10 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadAll, scheduleSave, state, uid, type Group, type Item } from "./store";
 
+function applyPanelAlpha(v: number): void {
+  document.documentElement.style.setProperty("--panel-a", String(v));
+}
+
 const $ = <T extends HTMLElement>(sel: string): T =>
   document.querySelector(sel) as T;
 
@@ -677,9 +681,14 @@ void getCurrentWebview().onDragDropEvent((ev) => {
 
 async function init(): Promise<void> {
   await loadAll();
+  applyPanelAlpha(state.settings.bgOpacity ?? 0.55);
   if (state.settings.pinned) btnPin.classList.add("active");
   if (state.settings.collapsed) document.body.classList.add("collapsed");
   render();
 }
+
+void getCurrentWebview().listen<number>("bg-opacity", (ev) => {
+  applyPanelAlpha(ev.payload);
+});
 
 void init();

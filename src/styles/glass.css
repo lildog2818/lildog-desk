@@ -35,12 +35,18 @@ body {
   flex-direction: column;
   border-radius: var(--radius);
   overflow: hidden;
-  background: linear-gradient(
-    155deg,
-    rgba(40, 40, 55, 0.52),
-    rgba(16, 16, 24, 0.58) 55%,
-    rgba(28, 22, 38, 0.5)
-  );
+  background:
+    linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.055),
+      rgba(255, 255, 255, 0.01) 55%
+    ),
+    linear-gradient(
+      155deg,
+      rgba(40, 40, 55, var(--panel-a, 0.55)),
+      rgba(16, 16, 24, calc(var(--panel-a, 0.55) * 1.08)) 55%,
+      rgba(28, 22, 38, var(--panel-a, 0.55))
+    );
   backdrop-filter: blur(26px) saturate(1.7);
   border: 1px solid var(--stroke);
   box-shadow:
