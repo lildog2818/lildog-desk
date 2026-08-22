@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent
 struct AppState {
     last_save: Mutex<Option<Instant>>,
     latest_pos: Mutex<(i32, i32)>,
+    latest_size: Mutex<(f64, f64)>,
 }
 
 #[tauri::command]
@@ -106,10 +107,33 @@ fn set_collapsed(
 fn save_pos_now(app: &AppHandle) {
     let dir = storage::data_dir(app);
     let mut s = storage::load_settings(&dir);
-    let (x, y) = *app.state::<AppState>().latest_pos.lock().unwrap();
-    s.x = Some(x);
-    s.y = Some(y);
+    {
+        let state = app.state::<AppState>();
+        let (x, y) = *state.latest_pos.lock().unwrap();
+        let (w, h) = *state.latest_size.lock().unwrap();
+        s.x = Some(x);
+        s.y = Some(y);
+        if w > 0.0 && h > 0.0 {
+            s.width = Some(w);
+            s.height = Some(h);
+        }
+    }
     storage::save_settings(&dir, &s);
+}
+
+fn schedule_save(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut last = state.last_save.lock().unwrap();
+    let due = last.map_or(true, |t| t.elapsed() > Duration::from_millis(800));
+    if due {
+        *last = Some(Instant::now());
+        drop(last);
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            save_pos_now(&handle);
+        });
+    }
 }
 
 fn clamp_into_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
@@ -162,14 +186,22 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let (cx, cy) = clamp_into_monitors(&win, x, y);
         let _ = win.set_position(PhysicalPosition::new(cx, cy));
         *app.state::<AppState>().latest_pos.lock().unwrap() = (cx, cy);
-    } else {
-        if let Ok(pos) = win.outer_position() {
-            *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
-        }
+    } else if let Ok(pos) = win.outer_position() {
+        *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
     }
 
     if settings.collapsed {
         let _ = win.set_size(LogicalSize::new(settings.width.unwrap_or(340.0), 72.0));
+    } else {
+        let w = settings.width.unwrap_or(340.0);
+        let h = settings.height.unwrap_or(560.0);
+        let _ = win.set_size(LogicalSize::new(w, h));
+    }
+
+    if let Ok(sz) = win.inner_size() {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        *app.state::<AppState>().latest_size.lock().unwrap() =
+            (sz.width as f64 / scale, sz.height as f64 / scale);
     }
     if settings.pinned {
         let _ = win.set_always_on_top(true);
@@ -277,23 +309,23 @@ pub fn run() {
             set_collapsed
         ])
         .setup(setup)
-        .on_window_event(|window, event| {
-            if let WindowEvent::Moved(pos) = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
                 *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
-                let state = app.state::<AppState>();
-                let mut last = state.last_save.lock().unwrap();
-                let due = last.map_or(true, |t| t.elapsed() > Duration::from_millis(800));
-                if due {
-                    *last = Some(Instant::now());
-                    drop(last);
-                    let handle = app.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(200));
-                        save_pos_now(&handle);
-                    });
-                }
+                schedule_save(app);
             }
+            WindowEvent::Resized(size) => {
+                let app = window.app_handle();
+                let scale = window.scale_factor().unwrap_or(1.0);
+                let lw = size.width as f64 / scale;
+                let lh = size.height as f64 / scale;
+                if lh > 100.0 && lw > 100.0 {
+                    *app.state::<AppState>().latest_size.lock().unwrap() = (lw, lh);
+                }
+                schedule_save(app);
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("failed to build lildog-desk");
