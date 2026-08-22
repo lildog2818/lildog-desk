@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>lildog-desk</title>
+    <link rel="stylesheet" href="/src/styles/glass.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="header">
+        <button id="btn-collapse" class="icon-btn" title="收起为小组件">‹</button>
+        <div id="search-wrap">
+          <span id="search-icon">⌕</span>
+          <input id="search" type="text" placeholder="搜索…" spellcheck="false" />
+        </div>
+        <button id="btn-add" class="icon-btn" title="添加">＋</button>
+        <button id="btn-pin" class="icon-btn" title="钉住置顶">📌</button>
+      </header>
+      <main id="board"></main>
+      <div id="pill" hidden>
+        <span id="pill-logo">🐶</span>
+        <span id="pill-name">lildog-desk</span>
+        <span id="pill-count"></span>
+      </div>
+    </div>
+    <div id="dropveil"><div>松手导入到「<b id="drop-target-name"></b>」</div></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

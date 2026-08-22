@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "lildog-desk",
+  "version": "0.1.0",
+  "identifier": "com.lildog.desk",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "lildog-desk",
+        "width": 340,
+        "height": 560,
+        "minWidth": 280,
+        "minHeight": 96,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "shadow": false,
+        "center": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png", "icons/32x32.png", "icons/128x128.png"]
+  }
+}
