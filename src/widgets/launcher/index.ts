@@ -6,7 +6,6 @@ import {
   closeMenus,
   toast,
 } from "../../platform/shell";
-import { openAppearanceMenu } from "../../platform/appearance";
 import { getWindowState, setCollapsed, setPinned } from "../../platform/winstate";
 import { registerWidget, type WidgetContext } from "../../platform/registry";
 import {
@@ -36,7 +35,6 @@ interface LauncherEls {
   pill: HTMLElement;
   pillCount: HTMLElement;
   btnAdd: HTMLButtonElement;
-  btnGear: HTMLButtonElement;
   btnPin: HTMLButtonElement;
   btnCollapse: HTMLButtonElement;
   dropveil: HTMLElement;
@@ -54,7 +52,6 @@ function buildDom(root: HTMLElement): LauncherEls {
         <input id="search" type="text" placeholder="搜索…" spellcheck="false" />
       </div>
       <button id="btn-add" class="icon-btn" title="添加">＋</button>
-      <button id="btn-gear" class="icon-btn" title="设置">⚙</button>
       <button id="btn-pin" class="icon-btn" title="钉住置顶">📌</button>
     </header>
     <main id="board"></main>
@@ -72,7 +69,6 @@ function buildDom(root: HTMLElement): LauncherEls {
     pill: root.querySelector<HTMLElement>("#pill")!,
     pillCount: root.querySelector<HTMLElement>("#pill-count")!,
     btnAdd: root.querySelector<HTMLButtonElement>("#btn-add")!,
-    btnGear: root.querySelector<HTMLButtonElement>("#btn-gear")!,
     btnPin: root.querySelector<HTMLButtonElement>("#btn-pin")!,
     btnCollapse: root.querySelector<HTMLButtonElement>("#btn-collapse")!,
     dropveil: root.querySelector<HTMLElement>("#dropveil")!,
@@ -378,13 +374,6 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
     winPinned = !winPinned;
     refreshPinVisual();
     void setPinned(winPinned);
-  };
-
-  e.btnGear.onclick = (ev) => {
-    const wasOpen = document.querySelector(".opacity-pop");
-    closeMenus();
-    if (wasOpen) return;
-    void openAppearanceMenu(ev.currentTarget as HTMLElement, false);
   };
 
   e.btnCollapse.onclick = () => {

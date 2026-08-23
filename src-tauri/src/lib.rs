@@ -30,7 +30,8 @@ struct AppState {
     last_save: Mutex<Option<Instant>>,
     latest_pos: Mutex<HashMap<String, (i32, i32)>>,
     latest_size: Mutex<HashMap<String, (f64, f64)>>,
-    glass_value: Mutex<HashMap<String, f64>>,
+    glass_value: Mutex<f64>,
+    size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
 }
 
@@ -67,6 +68,7 @@ async fn get_window_state(
     let settings = storage::load_settings(&dir);
     let mut st = settings.window(win.label());
     st.bg_opacity = settings.global_bg_opacity();
+    st.glass = settings.global_glass();
     st
 }
 
@@ -175,20 +177,17 @@ fn apply_glass(win: &WebviewWindow, v: f64) {
 fn apply_glass(_win: &WebviewWindow, _v: f64) {}
 
 #[tauri::command]
-fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
+async fn set_glass(app: AppHandle, v: f64) -> Result<(), String> {
     let v = v.clamp(0.0, 1.0);
-    #[cfg(target_os = "windows")]
-    apply_glass(&win, v);
-    *app
-        .state::<AppState>()
-        .glass_value
-        .lock()
-        .unwrap()
-        .entry(win.label().to_string())
-        .or_insert(0.376) = v;
+    *app.state::<AppState>().glass_value.lock().unwrap() = v;
+    // 全局统一：应用到当前所有窗口
+    for (_, win) in app.webview_windows() {
+        #[cfg(target_os = "windows")]
+        apply_glass(&win, v);
+    }
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    s.update_window(win.label(), |st| st.glass = v);
+    s.glass = Some(v);
     storage::save_settings(&dir, &s);
     Ok(())
 }
@@ -223,6 +222,7 @@ fn ensure_widget_window(
     let dir = storage::data_dir(app);
     let settings = storage::load_settings(&dir);
     let st = settings.window(&label);
+    let glass = settings.global_glass();
     let w = st.width.unwrap_or(width).max(160.0);
     let h = st.height.unwrap_or(height).max(96.0);
 
@@ -245,7 +245,7 @@ fn ensure_widget_window(
 
     #[cfg(target_os = "windows")]
     {
-        apply_glass(&win, st.glass);
+        apply_glass(&win, glass);
         round_window_corners(&win);
     }
 
@@ -269,11 +269,7 @@ fn ensure_widget_window(
             .unwrap()
             .insert(label.clone(), (sz.width as f64 / scale, sz.height as f64 / scale));
     }
-    app.state::<AppState>()
-        .glass_value
-        .lock()
-        .unwrap()
-        .insert(label.clone(), st.glass);
+    *app.state::<AppState>().glass_value.lock().unwrap() = glass;
 
     if st.pinned {
         let _ = win.set_always_on_top(true);
@@ -717,7 +713,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(target_os = "windows")]
     {
-        apply_glass(&win, settings.window("main").glass);
+        apply_glass(&win, settings.global_glass());
         round_window_corners(&win);
     }
 
@@ -737,11 +733,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap()
             .insert("main".into(), (pos.x, pos.y));
     }
-    app.state::<AppState>()
-        .glass_value
-        .lock()
-        .unwrap()
-        .insert("main".into(), main_state.glass);
+    *app.state::<AppState>().glass_value.lock().unwrap() = settings.global_glass();
+    *app.state::<AppState>().size_step.lock().unwrap() = settings.size_step();
 
     if let Ok(sz) = win.inner_size() {
         let scale = win.scale_factor().unwrap_or(1.0);
@@ -833,14 +826,7 @@ fn toggle_main_visible(app: &AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn reapply_glass_async(app: &AppHandle, label: &str) {
-    let glass = app
-        .state::<AppState>()
-        .glass_value
-        .lock()
-        .unwrap()
-        .get(label)
-        .copied();
-    let Some(glass) = glass else { return };
+    let glass = *app.state::<AppState>().glass_value.lock().unwrap();
     let Some(win) = app.get_webview_window(label) else {
         return;
     };

@@ -56,6 +56,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub bg_opacity: Option<f64>,
     #[serde(default)]
+    pub glass: Option<f64>,
+    #[serde(default)]
+    pub size_step: Option<u32>,
+    #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
 
@@ -66,6 +70,14 @@ impl AppSettings {
 
     pub fn global_bg_opacity(&self) -> f64 {
         self.bg_opacity.unwrap_or_else(default_bg_opacity)
+    }
+
+    pub fn global_glass(&self) -> f64 {
+        self.glass.unwrap_or_else(default_glass)
+    }
+
+    pub fn size_step(&self) -> u32 {
+        self.size_step.unwrap_or(20).clamp(4, 200)
     }
 
     pub fn update_window<F: FnOnce(&mut WinState)>(&mut self, label: &str, f: F) {
