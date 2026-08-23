@@ -179,8 +179,3 @@ export function buildWidgetShell(
 
   return { body, footer, btnRefresh, btnGear, header };
 }
-
-export function fmtTime(d: Date): string {
-  const p = (n: number): string => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}`;
-}

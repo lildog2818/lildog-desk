@@ -13,7 +13,6 @@ import {
   buildBarRow,
   buildWidgetShell,
   fetchJson,
-  fmtTime,
   loadQuotaConfig,
   type QuotaConfig,
   type UsageWindow,
@@ -120,10 +119,8 @@ function applyBars(): void {
   if (bars[1]) bars[1].setUsage(l?.weekly ?? null);
   if (bars[2]) bars[2].setUsage(l?.monthly ?? null);
   if (footer) {
-    footer.classList.remove("err");
-    footer.textContent = l?.error
-      ? String(l.error)
-      : `更新于 ${l?.fetchedAt ? fmtTime(new Date(l.fetchedAt)) : "--"} · 每 ${data.intervalMin} 分钟自动刷新`;
+    footer.classList.toggle("err", !!l?.error);
+    footer.textContent = l?.error ? String(l.error) : "";
   }
 }
 

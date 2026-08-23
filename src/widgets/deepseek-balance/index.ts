@@ -11,7 +11,6 @@ import {
   DEFAULT_INTERVAL,
   buildWidgetShell,
   fetchJson,
-  fmtTime,
   loadQuotaConfig,
   type QuotaConfig,
 } from "../quota-shared";
@@ -98,14 +97,8 @@ function applyLast(): void {
     }
   }
   if (els.footer) {
-    els.footer.classList.remove("err");
-    els.footer.textContent = l?.error
-      ? ""
-      : `更新于 ${l?.fetchedAt ? fmtTime(new Date(l.fetchedAt)) : "--"} · 每 ${data.intervalMin} 分钟自动刷新`;
-    if (l?.error) {
-      els.footer.textContent = String(l.error);
-      els.footer.classList.add("err");
-    }
+    els.footer.classList.toggle("err", !!l?.error);
+    els.footer.textContent = l?.error ? String(l.error) : "";
   }
 }
 
