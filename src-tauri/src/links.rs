@@ -1,5 +1,7 @@
 use serde::Serialize;
-use std::path::Path;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -109,4 +111,90 @@ fn lnk_target(lnk: &parselnk::Lnk, path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+const JUNK_MARKERS: [&str; 3] = ["uninstall", "uninst", "卸载"];
+
+pub fn collect_start_menu_apps() -> Vec<Resolved> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(p) = std::env::var_os("APPDATA") {
+        dirs.push(PathBuf::from(p)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs"));
+    }
+    if let Some(p) = std::env::var_os("PROGRAMDATA") {
+        dirs.push(PathBuf::from(p)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs"));
+    }
+
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    let mut seen_targets: HashSet<String> = HashSet::new();
+    let mut out: Vec<Resolved> = Vec::new();
+    for dir in dirs {
+        if dir.is_dir() {
+            collect_lnk_dir(&dir, 0, &mut seen_paths, &mut seen_targets, &mut out);
+        }
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+fn collect_lnk_dir(
+    dir: &Path,
+    depth: usize,
+    seen_paths: &mut HashSet<String>,
+    seen_targets: &mut HashSet<String>,
+    out: &mut Vec<Resolved>,
+) {
+    if depth > 6 {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lnk_dir(&path, depth + 1, seen_paths, seen_targets, out);
+            continue;
+        }
+        let is_lnk = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase() == "lnk")
+            .unwrap_or(false);
+        if !is_lnk || !seen_paths.insert(path.to_string_lossy().to_lowercase()) {
+            continue;
+        }
+        let name = file_label(&path);
+        let haystack = name.to_lowercase();
+        if JUNK_MARKERS.iter().any(|b| haystack.contains(b)) {
+            continue;
+        }
+        let Ok(lnk) = parselnk::Lnk::try_from(path.as_path()) else {
+            continue;
+        };
+        let Some(target) = lnk_target(&lnk, &path) else {
+            continue;
+        };
+        if Path::new(&target).is_dir() {
+            continue;
+        }
+        if !seen_targets.insert(target.to_lowercase()) {
+            continue;
+        }
+        let args = lnk
+            .string_data
+            .command_line_arguments
+            .clone()
+            .filter(|s| !s.trim().is_empty());
+        out.push(Resolved {
+            kind: "app".into(),
+            name,
+            target: path.to_string_lossy().into_owned(),
+            args,
+        });
+    }
 }

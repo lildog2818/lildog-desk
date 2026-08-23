@@ -47,6 +47,13 @@ fn resolve_paths(paths: Vec<String>) -> Vec<links::Resolved> {
 }
 
 #[tauri::command]
+async fn list_apps() -> Vec<links::Resolved> {
+    tauri::async_runtime::spawn_blocking(links::collect_start_menu_apps)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 async fn get_icon(app: AppHandle, path: String) -> String {
     icons::cached_icon(&app, &path).unwrap_or_default()
 }
@@ -369,6 +376,7 @@ pub fn run() {
             load_all,
             persist_store,
             resolve_paths,
+            list_apps,
             get_icon,
             open_target,
             reveal_target,

@@ -321,6 +321,154 @@ async function addApp(): Promise<void> {
   await importPaths([picked], activeGroupId());
 }
 
+interface AppEntry {
+  kind: Item["kind"];
+  name: string;
+  target: string;
+  args: string | null;
+}
+
+let appListCache: AppEntry[] | null = null;
+
+function openAppPicker(): void {
+  closeOverlays();
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  const box = document.createElement("div");
+  box.className = "dialog picker";
+  const h = document.createElement("h3");
+  h.textContent = "从应用列表添加";
+  const searchInput = textInput("", "搜索应用…");
+  searchInput.className = "picker-search";
+  const list = document.createElement("div");
+  list.className = "picker-list";
+  const status = document.createElement("div");
+  status.className = "picker-status";
+  status.textContent = "正在读取应用列表…";
+  const bar = document.createElement("div");
+  bar.className = "dialog-btns";
+  bar.append(
+    button("浏览文件…", "", () => {
+      closeOverlays();
+      void addApp();
+    }),
+    button("关闭", "", () => closeOverlays()),
+  );
+
+  box.append(h, searchInput, list, status, bar);
+  overlay.appendChild(box);
+  overlay.onpointerdown = (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  };
+  document.body.appendChild(overlay);
+  searchInput.focus();
+
+  const alive = (): boolean => overlay.isConnected;
+  const iconCache = new Map<string, string>();
+  let activeIcons = 0;
+  const iconQueue: Array<() => void> = [];
+  const pumpIcons = (): void => {
+    while (activeIcons < 4 && iconQueue.length > 0) {
+      activeIcons++;
+      iconQueue.shift()!();
+    }
+  };
+  const setRowImg = (row: HTMLDivElement, p: string): void => {
+    const ic = row.querySelector(".pick-icon");
+    if (!ic || ic.querySelector("img")) return;
+    ic.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = convertFileSrc(p);
+    img.draggable = false;
+    ic.appendChild(img);
+  };
+  const ensureIcon = (a: AppEntry, row: HTMLDivElement): void => {
+    const key = a.target.toLowerCase();
+    const cached = iconCache.get(key);
+    if (cached !== undefined) {
+      if (cached) setRowImg(row, cached);
+      return;
+    }
+    iconCache.set(key, "");
+    iconQueue.push(() => {
+      void invoke<string>("get_icon", { path: a.target })
+        .then((p) => {
+          iconCache.set(key, p ?? "");
+          if (alive() && p) setRowImg(row, p);
+        })
+        .catch(() => {})
+        .finally(() => {
+          activeIcons--;
+          pumpIcons();
+        });
+    });
+    pumpIcons();
+  };
+  const isAdded = (target: string): boolean =>
+    state.items.some((i) => i.target.toLowerCase() === target.toLowerCase());
+
+  let apps: AppEntry[] = appListCache ?? [];
+  const renderList = (): void => {
+    const q = searchInput.value.trim().toLowerCase();
+    const shown = q ? apps.filter((a) => a.name.toLowerCase().includes(q)) : apps;
+    status.textContent =
+      shown.length === 0
+        ? apps.length === 0
+          ? "未在开始菜单中找到应用"
+          : "没有匹配的应用"
+        : `${shown.length} 个应用`;
+    list.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    for (const a of shown.slice(0, 300)) {
+      const row = document.createElement("div");
+      row.className = "pick-row" + (isAdded(a.target) ? " added" : "");
+      row.title = a.name;
+      const ic = document.createElement("span");
+      ic.className = "pick-icon";
+      const fb = document.createElement("span");
+      fb.innerHTML = FALLBACK[a.kind] ?? FALLBACK.file;
+      ic.appendChild(fb);
+      const label = document.createElement("span");
+      label.className = "pick-name";
+      label.textContent = a.name;
+      row.append(ic, label);
+      row.onclick = () => {
+        if (isAdded(a.target)) {
+          toast("该项已存在");
+          return;
+        }
+        void importPaths([a.target], activeGroupId());
+      };
+      ensureIcon(a, row);
+      frag.appendChild(row);
+    }
+    list.appendChild(frag);
+  };
+
+  searchInput.oninput = () => renderList();
+  searchInput.onkeydown = (ev) => {
+    if (ev.key !== "Enter") return;
+    list
+      .querySelector<HTMLDivElement>(".pick-row:not(.added)")
+      ?.click();
+  };
+
+  if (apps.length === 0) {
+    void invoke<AppEntry[]>("list_apps")
+      .then((r) => {
+        r.sort((x, y) => x.name.localeCompare(y.name, "zh-Hans-CN"));
+        appListCache = r;
+        apps = r;
+        if (alive()) renderList();
+      })
+      .catch((e) => {
+        if (alive()) status.textContent = `读取失败：${String(e)}`;
+      });
+  } else {
+    renderList();
+  }
+}
+
 function addGroup(): void {
   promptText("新建分组", `分组 ${state.groups.length + 1}`, (name) => {
     state.groups.push({
@@ -653,8 +801,9 @@ search.oninput = () => render();
 btnAdd.onclick = (ev) => {
   const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
   buildMenu(rect.left, rect.bottom + 6, [
+    { label: "从应用列表添加…", action: () => openAppPicker() },
     { label: "添加文件夹…", action: () => void addFolder() },
-    { label: "添加应用或快捷方式…", action: () => void addApp() },
+    { label: "浏览文件添加…", action: () => void addApp() },
     { label: "新建分组…", action: addGroup },
   ]);
 };
