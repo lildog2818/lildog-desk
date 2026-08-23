@@ -702,6 +702,28 @@ fn save_pos_now(app: &AppHandle) {
     storage::save_settings(&dir, &s);
 }
 
+/// 快照当前可见的小组件窗口，供下次启动恢复
+fn snapshot_open_widgets(app: &AppHandle) {
+    let mut open = Vec::new();
+    for (label, win) in app.webview_windows() {
+        let Some(id) = label.strip_prefix("w-") else {
+            continue;
+        };
+        if !win.is_visible().unwrap_or(false) {
+            continue;
+        }
+        let title = win.title().map(|t| t.to_string()).unwrap_or_default();
+        open.push(storage::OpenWindow {
+            id: id.to_string(),
+            title,
+        });
+    }
+    let dir = storage::data_dir(app);
+    let mut s = storage::load_settings(&dir);
+    s.open_windows = open;
+    storage::save_settings(&dir, &s);
+}
+
 fn schedule_save(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mut last = state.last_save.lock().unwrap();
@@ -946,6 +968,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     rebuild_tray_menu(app.handle(), &[])?;
 
+    // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）
+    for ow in settings.open_windows.clone() {
+        if !valid_widget_id(&ow.id) {
+            continue;
+        }
+        let _ = ensure_widget_window(app.handle(), &ow.id, &ow.title, 300.0, 320.0);
+    }
+
     Ok(())
 }
 
@@ -1157,6 +1187,7 @@ pub fn run() {
     app.run(|_app, _event| {
         if matches!(_event, RunEvent::Exit) {
             save_pos_now(_app);
+            snapshot_open_widgets(_app);
         }
     });
 }

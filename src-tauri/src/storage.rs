@@ -50,6 +50,15 @@ impl Default for WinState {
     }
 }
 
+/// 退出时仍打开的小组件，用于下次启动恢复
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenWindow {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -59,6 +68,8 @@ pub struct AppSettings {
     pub glass: Option<f64>,
     #[serde(default)]
     pub size_step: Option<u32>,
+    #[serde(default)]
+    pub open_windows: Vec<OpenWindow>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
