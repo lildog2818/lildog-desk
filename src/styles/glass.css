@@ -274,6 +274,28 @@ body {
   opacity: 0.35;
 }
 
+.drag-ghost {
+  position: fixed;
+  z-index: 400;
+  margin: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.05)
+  );
+  border: 1px solid var(--stroke-strong);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 14px 32px rgba(0, 0, 0, 0.55);
+  animation: none;
+}
+
+body.drag-active,
+body.drag-active * {
+  cursor: grabbing !important;
+}
+
 .tile.drop-target {
   border-color: var(--accent);
   background: rgba(255, 184, 77, 0.12);

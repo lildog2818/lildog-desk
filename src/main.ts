@@ -453,6 +453,15 @@ function attachPointerDrag(tile: HTMLDivElement, item: Item): void {
   let startX = 0;
   let startY = 0;
   let dragging = false;
+  let ghost: HTMLDivElement | null = null;
+  let offX = 0;
+  let offY = 0;
+
+  const removeGhost = (): void => {
+    ghost?.remove();
+    ghost = null;
+    document.body.classList.remove("drag-active");
+  };
 
   tile.onpointerdown = (down) => {
     if (down.button !== 0) return;
@@ -469,8 +478,23 @@ function attachPointerDrag(tile: HTMLDivElement, item: Item): void {
         didDrag = true;
         tile.classList.add("dragging");
         tile.style.pointerEvents = "none";
+
+        const rect = tile.getBoundingClientRect();
+        offX = mv.clientX - rect.left;
+        offY = mv.clientY - rect.top;
+        ghost = tile.cloneNode(true) as HTMLDivElement;
+        ghost.className = "tile drag-ghost";
+        ghost.style.width = `${rect.width}px`;
+        ghost.style.left = `${mv.clientX - offX}px`;
+        ghost.style.top = `${mv.clientY - offY}px`;
+        document.body.appendChild(ghost);
+        document.body.classList.add("drag-active");
       }
       if (!dragging) return;
+      if (ghost) {
+        ghost.style.left = `${mv.clientX - offX}px`;
+        ghost.style.top = `${mv.clientY - offY}px`;
+      }
       clearDropMarks();
       const el = document.elementFromPoint(mv.clientX, mv.clientY);
       const hit = el?.closest(".tile") as HTMLElement | null;
@@ -479,9 +503,15 @@ function attachPointerDrag(tile: HTMLDivElement, item: Item): void {
       else if (grid) grid.parentElement?.classList.add("group-drop");
     };
 
-    const up = (upEv: PointerEvent) => {
+    const cleanup = (): void => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      removeGhost();
+    };
+
+    const up = (upEv: PointerEvent) => {
+      cleanup();
       clearDropMarks();
       tile.classList.remove("dragging");
       tile.style.pointerEvents = "";
@@ -511,8 +541,17 @@ function attachPointerDrag(tile: HTMLDivElement, item: Item): void {
       render();
     };
 
+    const cancel = () => {
+      cleanup();
+      clearDropMarks();
+      tile.classList.remove("dragging");
+      tile.style.pointerEvents = "";
+      didDrag = false;
+    };
+
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
   };
 }
 
