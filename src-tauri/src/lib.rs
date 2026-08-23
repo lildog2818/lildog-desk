@@ -456,6 +456,101 @@ fn resolve_opencode_key() -> Result<String, String> {
 
 // ---------------- 几何与位置记忆 ----------------
 
+const SNAP_THRESHOLD_LOGICAL: f64 = 14.0;
+
+/// 磁性吸附：拖动时窗口边缘贴近其他可见窗口或屏幕边缘则自动贴合。
+fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
+    let Ok(scale) = win.scale_factor() else {
+        return (x, y);
+    };
+    let th = (SNAP_THRESHOLD_LOGICAL * scale).round() as i32;
+    let Ok(size) = win.outer_size() else {
+        return (x, y);
+    };
+    let w = size.width as i32;
+    let h = size.height as i32;
+    if w <= 0 || h <= 0 {
+        return (x, y);
+    }
+    let mut l = x;
+    let mut r = x + w;
+    let mut t = y;
+    let mut b = y + h;
+
+    // 与其他可见窗口吸附
+    for (label, other) in app.webview_windows() {
+        if label == win.label() || !other.is_visible().unwrap_or(false) {
+            continue;
+        }
+        let (Ok(op), Ok(os)) = (other.outer_position(), other.outer_size()) else {
+            continue;
+        };
+        if os.width == 0 || os.height == 0 {
+            continue;
+        }
+        let ol = op.x;
+        let or_ = op.x + os.width as i32;
+        let ot = op.y;
+        let ob = op.y + os.height as i32;
+
+        let v_overlap = t < ob && b > ot;
+        if v_overlap {
+            if (l - or_).abs() <= th {
+                l = or_;
+                r = l + w;
+            } else if (r - ol).abs() <= th {
+                l = ol - w;
+                r = ol;
+            }
+        }
+        let h_overlap = l < or_ && r > ol;
+        if h_overlap {
+            if (t - ob).abs() <= th {
+                t = ob;
+                b = t + h;
+            } else if (b - ot).abs() <= th {
+                t = ot - h;
+                b = ot;
+            }
+        }
+    }
+
+    // 与屏幕边缘吸附
+    if let Ok(monitors) = win.available_monitors() {
+        for m in monitors {
+            let mp = m.position();
+            let ms = m.size();
+            let ml = mp.x;
+            let mr = mp.x + ms.width as i32;
+            let mt = mp.y;
+            let mb = mp.y + ms.height as i32;
+
+            let v_overlap = t < mb && b > mt;
+            if v_overlap {
+                if (l - ml).abs() <= th {
+                    l = ml;
+                    r = l + w;
+                } else if (r - mr).abs() <= th {
+                    l = mr - w;
+                    r = mr;
+                }
+            }
+            let h_overlap = l < mr && r > ml;
+            if h_overlap {
+                if (t - mt).abs() <= th {
+                    t = mt;
+                    b = t + h;
+                } else if (b - mb).abs() <= th {
+                    t = mb - h;
+                    b = mb;
+                }
+            }
+        }
+    }
+
+    (l, t)
+}
+
 fn clamp_fully_in_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
     let Ok(monitors) = win.available_monitors() else {
         return (x, y);
@@ -874,14 +969,15 @@ pub fn run() {
                 let label = window.label().to_string();
                 if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
-                    if cx != pos.x || cy != pos.y {
-                        let _ = win.set_position(PhysicalPosition::new(cx, cy));
+                    let (sx, sy) = snap_position(&win, app, cx, cy);
+                    if sx != pos.x || sy != pos.y {
+                        let _ = win.set_position(PhysicalPosition::new(sx, sy));
                     }
                     app.state::<AppState>()
                         .latest_pos
                         .lock()
                         .unwrap()
-                        .insert(label.clone(), (cx, cy));
+                        .insert(label.clone(), (sx, sy));
                 }
                 schedule_save(app);
             }
