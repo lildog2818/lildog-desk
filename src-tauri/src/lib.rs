@@ -1035,27 +1035,41 @@ pub fn run() {
                     let mut latest = state.latest_pos.lock().unwrap();
                     let mut locks = state.snap_locks.lock().unwrap();
 
-                    // 迟滞吸附：锁定期间窗口完全跟手，累计位移超过脱离阈值才解锁
-                    let mut hold = false;
-                    if let Some(origin) = locks.get(&label).copied() {
-                        if (cx - origin.0).abs() > escape_px
-                            || (cy - origin.1).abs() > escape_px
-                        {
-                            locks.remove(&label);
-                        } else {
-                            hold = true;
-                        }
-                    }
+                    // 调节大小时禁用吸附：尺寸调节常伴随 Moved 事件，此时不参与位置吸附
+                    let resizing_active = {
+                        let pend = state.resize_pending.lock().unwrap();
+                        matches!(
+                            pend.get(&label),
+                            Some(p) if p.3.elapsed() <= Duration::from_millis(220)
+                        )
+                    };
 
-                    let final_pos = if hold {
+                    let final_pos = if resizing_active {
+                        locks.remove(&label);
                         (cx, cy)
                     } else {
-                        let (sx, sy) = snap_position(&win, app, cx, cy);
-                        if sx != cx || sy != cy {
-                            locks.insert(label.clone(), (sx, sy));
-                            (sx, sy)
-                        } else {
+                        // 迟滞吸附：锁定期间窗口完全跟手，累计位移超过脱离阈值才解锁
+                        let mut hold = false;
+                        if let Some(origin) = locks.get(&label).copied() {
+                            if (cx - origin.0).abs() > escape_px
+                                || (cy - origin.1).abs() > escape_px
+                            {
+                                locks.remove(&label);
+                            } else {
+                                hold = true;
+                            }
+                        }
+
+                        if hold {
                             (cx, cy)
+                        } else {
+                            let (sx, sy) = snap_position(&win, app, cx, cy);
+                            if sx != cx || sy != cy {
+                                locks.insert(label.clone(), (sx, sy));
+                                (sx, sy)
+                            } else {
+                                (cx, cy)
+                            }
                         }
                     };
                     if final_pos.0 != pos.x || final_pos.1 != pos.y {
