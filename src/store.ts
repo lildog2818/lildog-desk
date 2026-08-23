@@ -21,6 +21,7 @@ interface Settings {
   pinned: boolean;
   collapsed: boolean;
   bgOpacity?: number;
+  glass?: number;
 }
 
 export const state = {

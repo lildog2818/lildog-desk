@@ -230,10 +230,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(target_os = "windows")]
     {
-        use window_vibrancy::apply_acrylic;
-        if let Err(e) = apply_acrylic(&win, Some((18, 18, 24, 96))) {
-            eprintln!("acrylic unavailable: {e}");
-        }
+        apply_glass(&win, settings.glass);
         round_window_corners(&win);
     }
 
@@ -321,6 +318,36 @@ fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn apply_glass(win: &WebviewWindow, v: f64) {
+    use window_vibrancy::{apply_acrylic, clear_acrylic};
+    let v = v.clamp(0.0, 1.0);
+    if v <= 0.001 {
+        let _ = clear_acrylic(win);
+        return;
+    }
+    let a = (v * 255.0).round().clamp(4.0, 250.0) as u8;
+    if let Err(e) = apply_acrylic(win, Some((18, 18, 24, a))) {
+        eprintln!("acrylic unavailable: {e}");
+    }
+}
+
+#[tauri::command]
+fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
+    let v = v.clamp(0.0, 1.0);
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::clear_acrylic;
+        let _ = clear_acrylic(&win);
+        apply_glass(&win, v);
+    }
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.glass = v;
+    storage::save_settings(&dir, &s);
+    Ok(())
+}
+
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -383,6 +410,7 @@ pub fn run() {
             set_pinned,
             set_collapsed,
             set_bg_opacity,
+            set_glass,
             get_autostart,
             set_autostart
         ])

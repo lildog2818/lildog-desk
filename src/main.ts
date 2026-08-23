@@ -859,7 +859,38 @@ btnGear.onclick = (ev) => {
     }, 250);
   };
 
-  pop.append(head, slider);
+  const ghead = document.createElement("div");
+  ghead.className = "opacity-head";
+  ghead.style.marginTop = "12px";
+  const gtitle = document.createElement("span");
+  gtitle.textContent = "毛玻璃强度";
+  const gval = document.createElement("span");
+  gval.className = "opacity-val";
+  ghead.append(gtitle, gval);
+
+  const gslider = document.createElement("input");
+  gslider.type = "range";
+  gslider.className = "opacity-slider";
+  gslider.min = "0";
+  gslider.max = "1";
+  gslider.step = "0.01";
+
+  let glass = Math.min(1, Math.max(0, state.settings.glass ?? 0.376));
+  gslider.value = String(glass);
+  gval.textContent = `${Math.round(glass * 100)}%`;
+
+  let glassSaveTimer = 0;
+  gslider.oninput = () => {
+    glass = parseFloat(gslider.value);
+    gval.textContent = `${Math.round(glass * 100)}%`;
+    window.clearTimeout(glassSaveTimer);
+    glassSaveTimer = window.setTimeout(() => {
+      state.settings.glass = glass;
+      void invoke("set_glass", { v: glass }).catch((e) => toast(String(e)));
+    }, 200);
+  };
+
+  pop.append(head, slider, ghead, gslider);
 
   const autoRow = document.createElement("div");
   autoRow.className = "auto-row";

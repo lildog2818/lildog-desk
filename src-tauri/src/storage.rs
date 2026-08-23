@@ -61,10 +61,16 @@ pub struct WinSettings {
     pub height: Option<f64>,
     #[serde(default = "default_bg_opacity")]
     pub bg_opacity: f64,
+    #[serde(default = "default_glass")]
+    pub glass: f64,
 }
 
 fn default_bg_opacity() -> f64 {
     0.55
+}
+
+fn default_glass() -> f64 {
+    0.376
 }
 
 impl Default for WinSettings {
@@ -74,10 +80,11 @@ impl Default for WinSettings {
             y: None,
             pinned: false,
             collapsed: false,
-            width: None,
-            height: None,
-            bg_opacity: 0.55,
-        }
+        width: None,
+        height: None,
+        bg_opacity: 0.55,
+        glass: 0.376,
+    }
     }
 }
 
