@@ -642,12 +642,12 @@ btnGear.onclick = (ev) => {
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "opacity-slider";
-  slider.min = "0.30";
-  slider.max = "0.85";
+  slider.min = "0";
+  slider.max = "1";
   slider.step = "0.01";
 
   let current = state.settings.bgOpacity ?? 0.55;
-  current = Math.min(0.85, Math.max(0.3, current));
+  current = Math.min(1, Math.max(0, current));
   slider.value = String(current);
   val.textContent = `${Math.round(current * 100)}%`;
 

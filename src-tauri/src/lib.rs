@@ -262,7 +262,7 @@ fn apply_bg_opacity(app: &AppHandle, v: f64) {
 
 #[tauri::command]
 fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
-    apply_bg_opacity(&app, opacity.clamp(0.30, 0.85));
+    apply_bg_opacity(&app, opacity.clamp(0.0, 1.0));
     Ok(())
 }
 
