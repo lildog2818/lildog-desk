@@ -2,127 +2,66 @@ mod icons;
 mod links;
 mod storage;
 
+use std::collections::HashMap;
+use std::fs;
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuItem};
+use serde::Deserialize;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_autostart::MacosLauncher;
+
+#[derive(Clone, Debug)]
+struct TrayEntry {
+    id: String,
+    title: String,
+    width: f64,
+    height: f64,
+}
 
 #[derive(Default)]
 struct AppState {
     last_save: Mutex<Option<Instant>>,
-    latest_pos: Mutex<(i32, i32)>,
-    latest_size: Mutex<(f64, f64)>,
-    glass_value: Mutex<f64>,
+    latest_pos: Mutex<HashMap<String, (i32, i32)>>,
+    latest_size: Mutex<HashMap<String, (f64, f64)>>,
+    glass_value: Mutex<HashMap<String, f64>>,
+    tray_items: Mutex<Vec<TrayEntry>>,
+}
+
+// ---------------- 小组件数据 ----------------
+
+#[tauri::command]
+fn load_widget_data(
+    app: AppHandle,
+    widget_id: String,
+) -> Option<serde_json::Value> {
+    storage::load_widget_data(&storage::data_dir(&app), &widget_id)
 }
 
 #[tauri::command]
-fn load_all(app: AppHandle) -> Result<serde_json::Value, String> {
+fn save_widget_data(
+    app: AppHandle,
+    widget_id: String,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    storage::save_widget_data(&storage::data_dir(&app), &widget_id, &data)
+}
+
+// ---------------- 窗口状态 ----------------
+
+#[tauri::command]
+fn get_window_state(app: AppHandle, win: WebviewWindow) -> storage::WinState {
     let dir = storage::data_dir(&app);
-    let mut store = storage::load_store(&dir);
-    if store.groups.is_empty() {
-        store.groups.push(storage::Group {
-            id: "g_default".into(),
-            name: "常用".into(),
-            color: "#ffb84d".into(),
-            collapsed: false,
-        });
-    }
-    Ok(serde_json::json!({
-        "store": store,
-        "settings": storage::load_settings(&dir),
-    }))
-}
-
-#[tauri::command]
-fn persist_store(app: AppHandle, store: storage::Store) -> Result<(), String> {
-    storage::save_store(&storage::data_dir(&app), &store)
-}
-
-#[tauri::command]
-fn resolve_paths(paths: Vec<String>) -> Vec<links::Resolved> {
-    paths.iter().filter_map(|p| links::resolve(p)).collect()
-}
-
-#[tauri::command]
-async fn list_apps() -> Vec<links::Resolved> {
-    tauri::async_runtime::spawn_blocking(links::collect_start_menu_apps)
-        .await
-        .unwrap_or_default()
-}
-
-#[tauri::command]
-async fn get_icon(app: AppHandle, path: String) -> String {
-    icons::cached_icon(&app, &path).unwrap_or_default()
-}
-
-#[tauri::command]
-fn open_target(target: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-
-        if target.trim().is_empty() {
-            return Err("目标路径为空".into());
-        }
-        let wide: Vec<u16> = std::ffi::OsStr::new(&target)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let hinst = unsafe {
-            ShellExecuteW(
-                None,
-                PCWSTR::null(),
-                PCWSTR(wide.as_ptr()),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            )
-        };
-        let code = hinst.0 as isize;
-        if code <= 32 {
-            return Err(shell_open_error(code));
-        }
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("xdg-open").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn shell_open_error(code: isize) -> String {
-    let msg = match code {
-        0 | 8 => "内存不足",
-        2 => "文件不存在",
-        3 => "路径不存在",
-        5 => "拒绝访问",
-        11 => "可执行文件无效或损坏",
-        26 => "发生共享冲突",
-        27 => "文件关联信息不完整",
-        28 | 29 | 30 => "动态数据交换失败",
-        31 => "没有与之关联的应用",
-        32 => "缺少依赖组件",
-        _ => "打开失败",
-    };
-    format!("{msg}（错误码 {code}）")
-}
-
-#[tauri::command]
-fn reveal_target(target: String) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    Command::new("explorer")
-        .raw_arg(format!("/select,\"{}\"", target))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let settings = storage::load_settings(&dir);
+    let mut st = settings.window(win.label());
+    st.bg_opacity = settings.global_bg_opacity();
+    st
 }
 
 #[tauri::command]
@@ -130,7 +69,7 @@ fn set_pinned(app: AppHandle, win: WebviewWindow, pin: bool) -> Result<(), Strin
     win.set_always_on_top(pin).map_err(|e| e.to_string())?;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    s.pinned = pin;
+    s.update_window(win.label(), |st| st.pinned = pin);
     storage::save_settings(&dir, &s);
     Ok(())
 }
@@ -141,56 +80,375 @@ fn set_collapsed(
     win: WebviewWindow,
     collapsed: bool,
 ) -> Result<(), String> {
+    let label = win.label().to_string();
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    if collapsed {
-        let size = win.inner_size().map_err(|e| e.to_string())?;
-        let scale = win.scale_factor().unwrap_or(1.0);
-        s.width = Some(size.width as f64 / scale);
-        s.height = Some(size.height as f64 / scale);
-        win.set_size(LogicalSize::new(s.width.unwrap_or(340.0), 72.0))
+    {
+        let st = s.windows.entry(label.clone()).or_default();
+        if collapsed {
+            if let Ok(size) = win.inner_size() {
+                let scale = win.scale_factor().unwrap_or(1.0);
+                st.width = Some(size.width as f64 / scale);
+                st.height = Some(size.height as f64 / scale);
+            }
+            win.set_size(LogicalSize::new(st.width.unwrap_or(340.0), 72.0))
+                .map_err(|e| e.to_string())?;
+        } else {
+            win.set_size(LogicalSize::new(
+                st.width.unwrap_or(340.0),
+                st.height.unwrap_or(560.0),
+            ))
             .map_err(|e| e.to_string())?;
-    } else {
-        let h = s.height.unwrap_or(560.0);
-        win.set_size(LogicalSize::new(s.width.unwrap_or(340.0), h))
-            .map_err(|e| e.to_string())?;
+        }
+        st.collapsed = collapsed;
     }
-    s.collapsed = collapsed;
     storage::save_settings(&dir, &s);
     Ok(())
 }
 
-fn save_pos_now(app: &AppHandle) {
-    let dir = storage::data_dir(app);
+#[tauri::command]
+fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
+    let v = opacity.clamp(0.0, 1.0);
+    let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    {
-        let state = app.state::<AppState>();
-        let (x, y) = *state.latest_pos.lock().unwrap();
-        let (w, h) = *state.latest_size.lock().unwrap();
-        s.x = Some(x);
-        s.y = Some(y);
-        if w > 0.0 && h > 0.0 {
-            s.width = Some(w);
-            s.height = Some(h);
-        }
-    }
+    s.bg_opacity = Some(v);
     storage::save_settings(&dir, &s);
+    let _ = app.emit("bg-opacity", v);
+    Ok(())
 }
 
-fn schedule_save(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let mut last = state.last_save.lock().unwrap();
-    let due = last.map_or(true, |t| t.elapsed() > Duration::from_millis(800));
-    if due {
-        *last = Some(Instant::now());
-        drop(last);
-        let handle = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            save_pos_now(&handle);
-        });
+#[cfg(target_os = "windows")]
+fn dwm_set_attr(win: &WebviewWindow, attr: u32, value: u32) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
+
+    let Ok(raw) = win.hwnd() else {
+        return false;
+    };
+    let hwnd = HWND(raw.0);
+    let v = value as i32;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWINDOWATTRIBUTE(attr as i32),
+            &v as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        )
+        .is_ok()
     }
 }
+
+#[cfg(target_os = "windows")]
+fn apply_glass(win: &WebviewWindow, v: f64) {
+    use window_vibrancy::{apply_acrylic, clear_acrylic};
+
+    let v = v.clamp(0.0, 1.0);
+    let _ = clear_acrylic(win);
+
+    if v <= 0.001 {
+        dwm_set_attr(win, 38, 1);
+        return;
+    }
+
+    dwm_set_attr(win, 20, 1);
+    if dwm_set_attr(win, 38, 2) {
+        return;
+    }
+
+    let a = (v * 255.0).round().clamp(4.0, 250.0) as u8;
+    if let Err(e) = apply_acrylic(win, Some((18, 18, 24, a))) {
+        eprintln!("acrylic unavailable: {e}");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_glass(_win: &WebviewWindow, _v: f64) {}
+
+#[tauri::command]
+fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
+    let v = v.clamp(0.0, 1.0);
+    #[cfg(target_os = "windows")]
+    apply_glass(&win, v);
+    *app
+        .state::<AppState>()
+        .glass_value
+        .lock()
+        .unwrap()
+        .entry(win.label().to_string())
+        .or_insert(0.376) = v;
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.update_window(win.label(), |st| st.glass = v);
+    storage::save_settings(&dir, &s);
+    Ok(())
+}
+
+// ---------------- 动态小组件窗口 ----------------
+
+fn valid_widget_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn ensure_widget_window(
+    app: &AppHandle,
+    widget_id: &str,
+    title: &str,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let label = format!("w-{widget_id}");
+    if !valid_widget_id(widget_id) {
+        return Err("非法的组件 id".into());
+    }
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let dir = storage::data_dir(app);
+    let settings = storage::load_settings(&dir);
+    let st = settings.window(&label);
+    let w = st.width.unwrap_or(width).max(160.0);
+    let h = st.height.unwrap_or(height).max(96.0);
+
+    let win = WebviewWindowBuilder::new(
+        app,
+        &label,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title(title)
+    .inner_size(w, h)
+    .min_inner_size(160.0, 72.0)
+    .decorations(false)
+    .transparent(true)
+    .skip_taskbar(true)
+    .resizable(true)
+    .shadow(false)
+    .visible(false)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        apply_glass(&win, st.glass);
+        round_window_corners(&win);
+    }
+
+    if let (Some(x), Some(y)) = (st.x, st.y) {
+        let (cx, cy) = clamp_fully_in_monitors(&win, x, y);
+        let _ = win.set_position(PhysicalPosition::new(cx, cy));
+        app.state::<AppState>()
+            .latest_pos
+            .lock()
+            .unwrap()
+            .insert(label.clone(), (cx, cy));
+    } else {
+        let _ = win.center();
+    }
+
+    if let Ok(sz) = win.inner_size() {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        app.state::<AppState>()
+            .latest_size
+            .lock()
+            .unwrap()
+            .insert(label.clone(), (sz.width as f64 / scale, sz.height as f64 / scale));
+    }
+    app.state::<AppState>()
+        .glass_value
+        .lock()
+        .unwrap()
+        .insert(label.clone(), st.glass);
+
+    if st.pinned {
+        let _ = win.set_always_on_top(true);
+    }
+
+    let _ = win.show();
+    let _ = win.set_focus();
+    Ok(())
+}
+
+#[tauri::command]
+fn open_widget_window(
+    app: AppHandle,
+    widget_id: String,
+    title: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    ensure_widget_window(&app, &widget_id, &title, width, height)
+}
+
+#[tauri::command]
+fn toggle_widget_window(
+    app: AppHandle,
+    widget_id: String,
+    title: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let label = format!("w-{widget_id}");
+    if let Some(existing) = app.get_webview_window(&label) {
+        if existing.is_visible().unwrap_or(false) {
+            let _ = existing.hide();
+            return Ok(());
+        }
+    }
+    ensure_widget_window(&app, &widget_id, &title, width, height)
+}
+
+// ---------------- 托盘 ----------------
+
+#[tauri::command]
+fn update_tray_widgets(
+    app: AppHandle,
+    items: Vec<TrayItemDto>,
+) -> Result<(), String> {
+    let entries: Vec<TrayEntry> = items
+        .into_iter()
+        .map(|i| TrayEntry {
+            id: i.id,
+            title: i.title,
+            width: i.width,
+            height: i.height,
+        })
+        .collect();
+    *app.state::<AppState>().tray_items.lock().unwrap() = entries.clone();
+    rebuild_tray_menu(&app, &entries)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayItemDto {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+}
+
+fn rebuild_tray_menu(
+    app: &AppHandle,
+    items: &[TrayEntry],
+) -> Result<(), String> {
+    use tauri::menu::IsMenuItem;
+
+    let Some(tray) = app.tray_by_id("tray") else {
+        return Ok(());
+    };
+    let show_item =
+        MenuItem::with_id(app, "show", "显示主面板", true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let sep1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    let sep2 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+
+    let mut checks: Vec<CheckMenuItem<tauri::Wry>> = Vec::new();
+    for entry in items {
+        let label = format!("w:{}", entry.id);
+        let visible = app
+            .get_webview_window(&label)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if let Ok(item) = CheckMenuItem::with_id(
+            app,
+            &label,
+            &entry.title,
+            true,
+            visible,
+            None::<&str>,
+        ) {
+            checks.push(item);
+        }
+    }
+
+    let mut handles: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&show_item];
+    if !checks.is_empty() {
+        handles.push(&sep1);
+        for c in &checks {
+            handles.push(c);
+        }
+        handles.push(&sep2);
+    }
+    handles.push(&quit_item);
+
+    let menu = Menu::with_items(app, &handles).map_err(|e| e.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())
+}
+
+// ---------------- HTTP（额度 API） ----------------
+
+#[tauri::command]
+async fn fetch_json(url: String, token: String) -> Result<serde_json::Value, String> {
+    if !url.starts_with("https://") {
+        return Err("仅允许 HTTPS 地址".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(concat!("lildog-desk/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败：{e}"))?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(token.trim())
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("网络请求失败：{e}"))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败：{e}"))?;
+    if !status.is_success() {
+        return Err(format!("HTTP {} {}", status.as_u16(), body));
+    }
+    serde_json::from_str(&body).map_err(|e| format!("响应解析失败：{e}"))
+}
+
+/// 从本机 opencode 登录文件自动读取 Go 订阅 key
+#[tauri::command]
+fn resolve_opencode_key() -> Result<String, String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "无法定位用户目录".to_string())?;
+    let path = std::path::PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("auth.json");
+    let text = fs::read_to_string(&path)
+        .map_err(|_| "未找到 opencode 登录文件，请先在 opencode 中登录或手动填写 Key".to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| "opencode auth.json 解析失败".to_string())?;
+
+    fn key_from(entry: &serde_json::Value) -> Option<String> {
+        match entry {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Object(m) => ["key", "api_key", "apiKey"]
+                .iter()
+                .find_map(|k| m.get(*k).and_then(|x| x.as_str()))
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.to_string()),
+            _ => None,
+        }
+    }
+
+    if let Some(entry) = v.get("opencode-go").and_then(key_from) {
+        return Ok(entry);
+    }
+    Err("auth.json 中未找到 opencode-go 的 Key，请手动填写".into())
+}
+
+// ---------------- 几何与位置记忆 ----------------
 
 fn clamp_fully_in_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
     let Ok(monitors) = win.available_monitors() else {
@@ -245,7 +503,8 @@ fn clamp_size_into_monitors(win: &WebviewWindow) {
     for (i, m) in monitors.iter().enumerate() {
         let mp = m.position();
         let ms = m.size();
-        let ix = (pos.x + size.width as i32).min(mp.x + ms.width as i32) - pos.x.max(mp.x);
+        let ix =
+            (pos.x + size.width as i32).min(mp.x + ms.width as i32) - pos.x.max(mp.x);
         let iy =
             (pos.y + size.height as i32).min(mp.y + ms.height as i32) - pos.y.max(mp.y);
         let inter = ix.max(0) as i64 * iy.max(0) as i64;
@@ -263,173 +522,136 @@ fn clamp_size_into_monitors(win: &WebviewWindow) {
     }
 }
 
-fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = storage::data_dir(app.handle());
-    let settings = storage::load_settings(&dir);
-    let win = app
-        .get_webview_window("main")
-        .ok_or("main window missing")?;
+fn save_pos_now(app: &AppHandle) {
+    let dir = storage::data_dir(app);
+    let state = app.state::<AppState>();
+    let positions = state.latest_pos.lock().unwrap().clone();
+    let sizes = state.latest_size.lock().unwrap().clone();
+    let mut s = storage::load_settings(&dir);
+    for (label, (x, y)) in positions {
+        s.update_window(&label, |st| {
+            st.x = Some(x);
+            st.y = Some(y);
+            if let Some((w, h)) = sizes.get(&label) {
+                if *w > 0.0 && *h > 0.0 {
+                    st.width = Some(*w);
+                    st.height = Some(*h);
+                }
+            }
+        });
+    }
+    storage::save_settings(&dir, &s);
+}
 
+fn schedule_save(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut last = state.last_save.lock().unwrap();
+    let due = last.map_or(true, |t| t.elapsed() > Duration::from_millis(800));
+    if due {
+        *last = Some(Instant::now());
+        drop(last);
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            save_pos_now(&handle);
+        });
+    }
+}
+
+// ---------------- 基础设施（快捷启动组件使用） ----------------
+
+#[tauri::command]
+fn resolve_paths(paths: Vec<String>) -> Vec<links::Resolved> {
+    paths.iter().filter_map(|p| links::resolve(p)).collect()
+}
+
+#[tauri::command]
+async fn list_apps() -> Vec<links::Resolved> {
+    tauri::async_runtime::spawn_blocking(links::collect_start_menu_apps)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn get_icon(app: AppHandle, path: String) -> String {
+    icons::cached_icon(&app, &path).unwrap_or_default()
+}
+
+#[tauri::command]
+fn open_target(target: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        apply_glass(&win, settings.glass);
-        round_window_corners(&win);
-    }
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    if let (Some(x), Some(y)) = (settings.x, settings.y) {
-        let (cx, cy) = clamp_fully_in_monitors(&win, x, y);
-        let _ = win.set_position(PhysicalPosition::new(cx, cy));
-        *app.state::<AppState>().latest_pos.lock().unwrap() = (cx, cy);
-    } else if let Ok(pos) = win.outer_position() {
-        *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
-    }
-    *app.state::<AppState>().glass_value.lock().unwrap() = settings.glass.clamp(0.0, 1.0);
-
-    if settings.collapsed {
-        let _ = win.set_size(LogicalSize::new(settings.width.unwrap_or(340.0), 72.0));
-    } else {
-        let w = settings.width.unwrap_or(340.0);
-        let h = settings.height.unwrap_or(560.0);
-        let _ = win.set_size(LogicalSize::new(w, h));
-    }
-
-    if let Ok(sz) = win.inner_size() {
-        let scale = win.scale_factor().unwrap_or(1.0);
-        *app.state::<AppState>().latest_size.lock().unwrap() =
-            (sz.width as f64 / scale, sz.height as f64 / scale);
-    }
-    if settings.pinned {
-        let _ = win.set_always_on_top(true);
-    }
-
-    let show_item = MenuItem::with_id(app, "show", "显示 / 隐藏", true, None::<&str>)?;
-    let pin_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &pin_item])?;
-
-    tauri::tray::TrayIconBuilder::with_id("tray")
-        .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
-        .tooltip("lildog-desk")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => toggle_visible(app),
-            "quit" => {
-                save_pos_now(app);
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_visible(tray.app_handle());
-            }
-        })
-        .build(app)?;
-
-    Ok(())
-}
-
-fn toggle_visible(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        if win.is_visible().unwrap_or(false) {
-            let _ = win.hide();
-        } else {
-            let _ = win.show();
-            let _ = win.set_focus();
+        if target.trim().is_empty() {
+            return Err("目标路径为空".into());
         }
+        let wide: Vec<u16> = std::ffi::OsStr::new(&target)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let hinst = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR::null(),
+                PCWSTR(wide.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            )
+        };
+        let code = hinst.0 as isize;
+        if code <= 32 {
+            return Err(shell_open_error(code));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
-fn apply_bg_opacity(app: &AppHandle, v: f64) {
-    let dir = storage::data_dir(app);
-    let mut s = storage::load_settings(&dir);
-    s.bg_opacity = v;
-    storage::save_settings(&dir, &s);
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.emit("bg-opacity", v);
-    }
+#[cfg(target_os = "windows")]
+fn shell_open_error(code: isize) -> String {
+    let msg = match code {
+        0 | 8 => "内存不足",
+        2 => "文件不存在",
+        3 => "路径不存在",
+        5 => "拒绝访问",
+        11 => "可执行文件无效或损坏",
+        26 => "发生共享冲突",
+        27 => "文件关联信息不完整",
+        28 | 29 | 30 => "动态数据交换失败",
+        31 => "没有与之关联的应用",
+        32 => "缺少依赖组件",
+        _ => "打开失败",
+    };
+    format!("{msg}（错误码 {code}）")
 }
 
 #[tauri::command]
-fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
-    apply_bg_opacity(&app, opacity.clamp(0.0, 1.0));
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn dwm_set_attr(win: &WebviewWindow, attr: u32, value: u32) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
-
-    let Ok(raw) = win.hwnd() else {
-        return false;
-    };
-    let hwnd = HWND(raw.0);
-    let v = value as i32;
-    unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWINDOWATTRIBUTE(attr as i32),
-            &v as *const _ as *const _,
-            std::mem::size_of::<i32>() as u32,
-        )
-        .is_ok()
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn apply_glass(win: &WebviewWindow, v: f64) {
-    use window_vibrancy::{apply_acrylic, clear_acrylic};
-
-    let v = v.clamp(0.0, 1.0);
-    let _ = clear_acrylic(win);
-
-    if v <= 0.001 {
-        dwm_set_attr(win, 38, 1);
-        return;
-    }
-
-    dwm_set_attr(win, 20, 1);
-    if dwm_set_attr(win, 38, 2) {
-        return;
-    }
-
-    let a = (v * 255.0).round().clamp(4.0, 250.0) as u8;
-    if let Err(e) = apply_acrylic(win, Some((18, 18, 24, a))) {
-        eprintln!("acrylic unavailable: {e}");
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn reapply_glass_async(app: &AppHandle) {
-    let glass = *app.state::<AppState>().glass_value.lock().unwrap();
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(60));
-        apply_glass(&win.clone(), glass);
-        std::thread::sleep(Duration::from_millis(340));
-        apply_glass(&win, glass);
-    });
-}
-
-#[tauri::command]
-fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
-    let v = v.clamp(0.0, 1.0);
+fn reveal_target(target: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    apply_glass(&win, v);
-    *app.state::<AppState>().glass_value.lock().unwrap() = v;
-    let dir = storage::data_dir(&app);
-    let mut s = storage::load_settings(&dir);
-    s.glass = v;
-    storage::save_settings(&dir, &s);
-    Ok(())
+    {
+        use std::os::windows::process::CommandExt;
+        Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", target))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -475,6 +697,147 @@ fn round_window_corners(win: &WebviewWindow) {
     }
 }
 
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = storage::data_dir(app.handle());
+    storage::migrate(&dir);
+    let settings = storage::load_settings(&dir);
+    let win = app
+        .get_webview_window("main")
+        .ok_or("main window missing")?;
+
+    #[cfg(target_os = "windows")]
+    {
+        apply_glass(&win, settings.window("main").glass);
+        round_window_corners(&win);
+    }
+
+    let main_state = settings.window("main");
+    if let (Some(x), Some(y)) = (main_state.x, main_state.y) {
+        let (cx, cy) = clamp_fully_in_monitors(&win, x, y);
+        let _ = win.set_position(PhysicalPosition::new(cx, cy));
+        app.state::<AppState>()
+            .latest_pos
+            .lock()
+            .unwrap()
+            .insert("main".into(), (cx, cy));
+    } else if let Ok(pos) = win.outer_position() {
+        app.state::<AppState>()
+            .latest_pos
+            .lock()
+            .unwrap()
+            .insert("main".into(), (pos.x, pos.y));
+    }
+    app.state::<AppState>()
+        .glass_value
+        .lock()
+        .unwrap()
+        .insert("main".into(), main_state.glass);
+
+    if let Ok(sz) = win.inner_size() {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        app.state::<AppState>().latest_size.lock().unwrap().insert(
+            "main".into(),
+            (sz.width as f64 / scale, sz.height as f64 / scale),
+        );
+    }
+
+    tauri::tray::TrayIconBuilder::with_id("tray")
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../icons/32x32.png"
+        ))?)
+        .tooltip("lildog-desk")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => toggle_main_visible(app),
+            "quit" => {
+                save_pos_now(app);
+                app.exit(0);
+            }
+            id => {
+                if let Some(widget_id) = id.strip_prefix("w:") {
+                    let state = app.state::<AppState>();
+                    let entry = {
+                        let items = state.tray_items.lock().unwrap().clone();
+                        items.into_iter().find(|e| e.id == widget_id)
+                    };
+                    if let Some(e) = entry {
+                        let _ = toggle_widget_window_cmd(
+                            app,
+                            &e.id,
+                            &e.title,
+                            e.width,
+                            e.height,
+                        );
+                    }
+                }
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_visible(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    rebuild_tray_menu(app.handle(), &[])?;
+
+    Ok(())
+}
+
+fn toggle_widget_window_cmd(
+    app: &AppHandle,
+    widget_id: &str,
+    title: &str,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let label = format!("w-{widget_id}");
+    if let Some(existing) = app.get_webview_window(&label) {
+        if existing.is_visible().unwrap_or(false) {
+            let _ = existing.hide();
+            return Ok(());
+        }
+    }
+    ensure_widget_window(app, widget_id, title, width, height)
+}
+
+fn toggle_main_visible(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reapply_glass_async(app: &AppHandle, label: &str) {
+    let glass = app
+        .state::<AppState>()
+        .glass_value
+        .lock()
+        .unwrap()
+        .get(label)
+        .copied();
+    let Some(glass) = glass else { return };
+    let Some(win) = app.get_webview_window(label) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(60));
+        apply_glass(&win.clone(), glass);
+        std::thread::sleep(Duration::from_millis(340));
+        apply_glass(&win, glass);
+    });
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -484,17 +847,23 @@ pub fn run() {
         ))
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            load_all,
-            persist_store,
+            load_widget_data,
+            save_widget_data,
+            get_window_state,
+            set_pinned,
+            set_collapsed,
+            set_bg_opacity,
+            set_glass,
+            open_widget_window,
+            toggle_widget_window,
+            update_tray_widgets,
+            fetch_json,
+            resolve_opencode_key,
             resolve_paths,
             list_apps,
             get_icon,
             open_target,
             reveal_target,
-            set_pinned,
-            set_collapsed,
-            set_bg_opacity,
-            set_glass,
             get_autostart,
             set_autostart
         ])
@@ -502,31 +871,41 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
-                if let Some(win) = app.get_webview_window("main") {
+                let label = window.label().to_string();
+                if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
                     if cx != pos.x || cy != pos.y {
                         let _ = win.set_position(PhysicalPosition::new(cx, cy));
                     }
-                    *app.state::<AppState>().latest_pos.lock().unwrap() = (cx, cy);
+                    app.state::<AppState>()
+                        .latest_pos
+                        .lock()
+                        .unwrap()
+                        .insert(label.clone(), (cx, cy));
                 }
                 schedule_save(app);
             }
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
-                if let Some(win) = app.get_webview_window("main") {
+                let label = window.label().to_string();
+                if let Some(win) = app.get_webview_window(&label) {
                     clamp_size_into_monitors(&win);
                 }
                 let scale = window.scale_factor().unwrap_or(1.0);
                 let lw = size.width as f64 / scale;
                 let lh = size.height as f64 / scale;
                 if lh > 100.0 && lw > 100.0 {
-                    *app.state::<AppState>().latest_size.lock().unwrap() = (lw, lh);
+                    app.state::<AppState>()
+                        .latest_size
+                        .lock()
+                        .unwrap()
+                        .insert(label.clone(), (lw, lh));
                 }
                 schedule_save(app);
             }
             WindowEvent::Focused(_) => {
                 #[cfg(target_os = "windows")]
-                reapply_glass_async(window.app_handle());
+                reapply_glass_async(window.app_handle(), window.label());
             }
             _ => {}
         })

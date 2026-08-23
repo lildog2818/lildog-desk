@@ -1,0 +1,162 @@
+.qw-icon {
+  font-size: 15px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+}
+
+.qw-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.4px;
+}
+
+.qw-body {
+  padding: 6px 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qw-footer {
+  flex-shrink: 0;
+  padding: 6px 14px 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.qw-footer.err {
+  color: #ff9b9b;
+}
+
+.icon-btn.spin {
+  animation: qspin 0.8s linear infinite;
+}
+
+@keyframes qspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- 用量条 ---- */
+.qbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qbar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.qbar-name {
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.qbar-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.qbar-track {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--stroke);
+  overflow: hidden;
+}
+
+.qbar-fill {
+  height: 100%;
+  border-radius: 3px;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.25);
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+.qbar-foot {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  min-height: 12px;
+}
+
+/* ---- DeepSeek ---- */
+.ds-total-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.ds-total {
+  font-size: 34px;
+  font-weight: 750;
+  letter-spacing: 1px;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+.ds-total.placeholder {
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+.ds-rows {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+}
+
+.ds-chip {
+  font-size: 10px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  padding: 1px 8px;
+}
+
+.ds-val {
+  font-weight: 600;
+}
+
+.ds-gap {
+  width: 10px;
+}
+
+.ds-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.ds-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ds-dot.ok {
+  background: #6ee7b7;
+  box-shadow: 0 0 8px #6ee7b7;
+}
+
+.ds-dot.warn {
+  background: #ffd166;
+  box-shadow: 0 0 8px #ffd166;
+}
+
+.ds-dot.err {
+  background: #ff6b6b;
+  box-shadow: 0 0 8px #ff6b6b;
+}
