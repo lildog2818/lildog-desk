@@ -32,12 +32,43 @@ interface DsPayload {
 interface DsData extends QuotaConfig {
   last?: {
     total?: string;
-    granted?: string;
-    toppedUp?: string;
     currency?: string;
     available?: boolean;
+    usageDay?: number;
+    usageMonth?: number;
     fetchedAt?: number;
     error?: string | null;
+  };
+  /** 今日用量追踪：基线 = 当日首次观察到的余额 */
+  day?: { date: string; base: number };
+  /** 本月用量追踪：基线 = 当月首次观察到的余额 */
+  month?: { month: string; base: number };
+}
+
+function localDateStr(d = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 更新日/月用量基线；余额上涨视为充值，同步抬高基线避免误计为负消耗 */
+function trackUsage(total: number): { usageDay: number; usageMonth: number } {
+  const dstr = localDateStr();
+  const mstr = dstr.slice(0, 7);
+
+  if (!data.day || data.day.date !== dstr) {
+    data.day = { date: dstr, base: total };
+  } else if (total > data.day.base) {
+    data.day.base = total;
+  }
+  if (!data.month || data.month.month !== mstr) {
+    data.month = { month: mstr, base: total };
+  } else if (total > data.month.base) {
+    data.month.base = total;
+  }
+
+  return {
+    usageDay: Math.max(0, Math.round((data.day.base - total) * 100) / 100),
+    usageMonth: Math.max(0, Math.round((data.month.base - total) * 100) / 100),
   };
 }
 
@@ -45,15 +76,15 @@ const data: DsData = { apiKey: "", intervalMin: DEFAULT_INTERVAL };
 
 let els: {
   total: HTMLDivElement | null;
-  granted: HTMLSpanElement | null;
-  toppedUp: HTMLSpanElement | null;
+  usageDay: HTMLSpanElement | null;
+  usageMonth: HTMLSpanElement | null;
   dot: HTMLSpanElement | null;
   statusText: HTMLSpanElement | null;
   footer: HTMLDivElement | null;
 } = {
   total: null,
-  granted: null,
-  toppedUp: null,
+  usageDay: null,
+  usageMonth: null,
   dot: null,
   statusText: null,
   footer: null,
@@ -65,21 +96,22 @@ let alive = false;
 function applyLast(): void {
   if (!alive) return;
   const l = data.last;
+  const sym = l?.currency === "USD" ? "$" : "¥";
   if (els.total) {
     if (l?.error) {
       els.total.textContent = "--";
     } else if (l?.total !== undefined) {
-      const cur = l.currency ?? "";
-      els.total.textContent = `${cur === "CNY" ? "¥" : cur === "USD" ? "$" : ""}${l.total}`;
+      els.total.textContent = `${sym}${l.total}`;
       els.total.classList.remove("placeholder");
     } else {
       els.total.textContent = "待配置";
       els.total.classList.add("placeholder");
     }
   }
-  if (els.granted) els.granted.textContent = `赠金 ¥${l?.granted ?? "-"}`;
-  if (els.toppedUp)
-    els.toppedUp.textContent = `充值 ${l?.currency === "USD" ? "$" : "¥"}${l?.toppedUp ?? "-"}`;
+  if (els.usageDay)
+    els.usageDay.textContent = `${sym}${(l?.usageDay ?? 0).toFixed(2)}`;
+  if (els.usageMonth)
+    els.usageMonth.textContent = `${sym}${(l?.usageMonth ?? 0).toFixed(2)}`;
 
   if (els.dot && els.statusText) {
     if (l?.error) {
@@ -110,12 +142,14 @@ async function refresh(): Promise<void> {
     if (!token) throw new Error("请先在设置中填写 DeepSeek API Key");
     const p = (await fetchJson(BALANCE_URL, token)) as DsPayload;
     const info = p.balance_infos?.[0];
+    const totalNum = parseFloat(info?.total_balance ?? "0") || 0;
+    const { usageDay, usageMonth } = trackUsage(totalNum);
     data.last = {
       total: info?.total_balance ?? "-",
-      granted: info?.granted_balance ?? "-",
-      toppedUp: info?.topped_up_balance ?? "-",
       currency: info?.currency ?? "CNY",
       available: p.is_available === true,
+      usageDay,
+      usageMonth,
       fetchedAt: Date.now(),
       error: null,
     };
@@ -176,9 +210,9 @@ async function mountDsBalance(root: HTMLElement): Promise<() => void> {
       <div class="ds-total placeholder" id="ds-total">待配置</div>
     </div>
     <div class="ds-rows">
-      <span class="ds-chip">赠金</span><span class="ds-val" id="ds-granted">-</span>
+      <span class="ds-chip">今日</span><span class="ds-val" id="ds-day">-</span>
       <span class="ds-gap"></span>
-      <span class="ds-chip">充值</span><span class="ds-val" id="ds-topped">-</span>
+      <span class="ds-chip">本月</span><span class="ds-val" id="ds-month">-</span>
     </div>
     <div class="ds-status">
       <span class="ds-dot idle"></span>
@@ -187,8 +221,8 @@ async function mountDsBalance(root: HTMLElement): Promise<() => void> {
   `;
   els = {
     total: shell.body.querySelector("#ds-total"),
-    granted: shell.body.querySelector("#ds-granted"),
-    toppedUp: shell.body.querySelector("#ds-topped"),
+    usageDay: shell.body.querySelector("#ds-day"),
+    usageMonth: shell.body.querySelector("#ds-month"),
     dot: shell.body.querySelector(".ds-dot"),
     statusText: shell.body.querySelector(".ds-status-text"),
     footer: shell.footer,
@@ -211,8 +245,8 @@ async function mountDsBalance(root: HTMLElement): Promise<() => void> {
     window.clearInterval(timer);
     els = {
       total: null,
-      granted: null,
-      toppedUp: null,
+      usageDay: null,
+      usageMonth: null,
       dot: null,
       statusText: null,
       footer: null,
@@ -225,7 +259,7 @@ registerWidget({
   name: "DeepSeek 余额",
   icon: "🐋",
   color: "#4d6bfe",
-  desc: "监控 DeepSeek API 账户余额",
+  desc: "监控 DeepSeek 余额与今日/本月用量",
   width: 300,
   height: 250,
   minWidth: 240,
@@ -236,6 +270,6 @@ registerWidget({
     const l = saved.last;
     if (!l || l.error) return "点击配置 API Key";
     const sym = l.currency === "USD" ? "$" : "¥";
-    return `${sym}${l.total ?? "-"} · ${l.available ? "可用" : "余额不足"}`;
+    return `${sym}${l.total ?? "-"} · 今日 ${sym}${(l.usageDay ?? 0).toFixed(2)}`;
   },
 });
