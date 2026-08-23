@@ -81,29 +81,15 @@ async fn get_window_state(
     }))
 }
 
-/// 设置尺寸步进（逻辑像素），并对所有窗口立即按新步进对齐
+/// 设置尺寸步进（逻辑像素）。仅影响后续的尺寸调节，不改动已打开窗口。
 #[tauri::command]
 async fn set_size_step(app: AppHandle, step: f64) -> Result<(), String> {
-    let s32 = (step.round() as u32).clamp(4, 200);
+    let s32 = (step.round() as u32).clamp(8, 200);
     *app.state::<AppState>().size_step.lock().unwrap() = s32;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
     s.size_step = Some(s32);
     storage::save_settings(&dir, &s);
-
-    for (_, win) in app.webview_windows() {
-        if let Ok(sz) = win.inner_size() {
-            let scale = win.scale_factor().unwrap_or(1.0);
-            let lw = sz.width as f64 / scale;
-            let lh = sz.height as f64 / scale;
-            if lh <= 100.0 || lw <= 100.0 {
-                continue; // 收起为 pill 或极小窗口不参与对齐
-            }
-            let qw = quantize_logical(lw, s32, 160.0);
-            let qh = quantize_logical(lh, s32, 96.0);
-            let _ = win.set_size(LogicalSize::new(qw, qh));
-        }
-    }
     Ok(())
 }
 
