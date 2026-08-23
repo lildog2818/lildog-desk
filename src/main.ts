@@ -702,6 +702,31 @@ btnGear.onclick = (ev) => {
   };
 
   pop.append(head, slider);
+
+  const autoRow = document.createElement("div");
+  autoRow.className = "auto-row";
+  const autoLabel = document.createElement("span");
+  autoLabel.textContent = "开机自启";
+  const autoToggle = document.createElement("button");
+  autoToggle.className = "auto-toggle";
+  autoToggle.setAttribute("aria-pressed", "false");
+  const applyAutoState = (on: boolean): void => {
+    autoToggle.classList.toggle("on", on);
+    autoToggle.setAttribute("aria-pressed", String(on));
+  };
+  autoRow.append(autoLabel, autoToggle);
+  pop.appendChild(autoRow);
+
+  void invoke<boolean>("get_autostart")
+    .then((v) => applyAutoState(v))
+    .catch(() => applyAutoState(false));
+  autoToggle.onclick = () => {
+    const next = !autoToggle.classList.contains("on");
+    void invoke("set_autostart", { enable: next })
+      .then(() => applyAutoState(next))
+      .catch((e) => toast(String(e)));
+  };
+
   document.body.appendChild(pop);
 };
 

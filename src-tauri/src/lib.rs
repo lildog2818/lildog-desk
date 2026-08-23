@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent};
+use tauri_plugin_autostart::MacosLauncher;
 
 #[derive(Default)]
 struct AppState {
@@ -266,6 +267,23 @@ fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enable: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    if enable {
+        autostart.enable().map_err(|e| e.to_string())
+    } else {
+        autostart.disable().map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn round_window_corners(win: &WebviewWindow) {
     use windows::Win32::Foundation::HWND;
@@ -295,6 +313,10 @@ fn round_window_corners(win: &WebviewWindow) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             load_all,
@@ -305,7 +327,9 @@ pub fn run() {
             reveal_target,
             set_pinned,
             set_collapsed,
-            set_bg_opacity
+            set_bg_opacity,
+            get_autostart,
+            set_autostart
         ])
         .setup(setup)
         .on_window_event(|window, event| match event {

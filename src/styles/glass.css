@@ -138,6 +138,49 @@ body {
   cursor: pointer;
 }
 
+.auto-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+.auto-toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.auto-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  transition: transform 0.15s ease;
+}
+
+.auto-toggle.on {
+  background: linear-gradient(150deg, #ffb84d, #ff8a3d);
+  border-color: transparent;
+}
+
+.auto-toggle.on::after {
+  transform: translateX(16px);
+  background: #2b1800;
+}
+
 #search-wrap {
   flex: 1;
   display: flex;
