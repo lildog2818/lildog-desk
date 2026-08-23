@@ -33,6 +33,8 @@ struct AppState {
     /// 已触发吸附并处于锁定态的窗口：label -> 吸附落点。
     /// 锁定期间不再重复吸附，避免“吸住后拖不动”。
     snap_locks: Mutex<HashMap<String, (i32, i32)>>,
+    /// 去抖中的尺寸调节：label -> (逻辑宽, 逻辑高, 代数, 最近时间)
+    resize_pending: Mutex<HashMap<String, (f64, f64, u64, Instant)>>,
     glass_value: Mutex<f64>,
     size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
@@ -1063,15 +1065,52 @@ pub fn run() {
                         .unwrap()
                         .insert(label.clone(), (lw, lh));
 
-                    // 尺寸阶梯：把窗口尺寸吸附到步进整数倍（跳过收起为 pill 的窗口）
-                    if let Some(win) = app.get_webview_window(&label) {
-                        let step = *app.state::<AppState>().size_step.lock().unwrap();
-                        let qw = quantize_logical(lw, step, 160.0);
-                        let qh = quantize_logical(lh, step, 96.0);
-                        if (qw - lw).abs() > 0.6 || (qh - lh).abs() > 0.6 {
-                            let _ = win.set_size(LogicalSize::new(qw, qh));
+                    // 尺寸阶梯去抖：拖动过程不干预窗口，停止约 150ms 后一次性吸附到步进，
+                    // 避免拖拽中反复 set_size 造成的抖动
+                    let state = app.state::<AppState>();
+                    let step = *state.size_step.lock().unwrap();
+                    let gen = {
+                        let mut pend = state.resize_pending.lock().unwrap();
+                        let e = pend
+                            .entry(label.clone())
+                            .or_insert((lw, lh, 0, Instant::now()));
+                        e.0 = lw;
+                        e.1 = lh;
+                        e.2 += 1;
+                        e.3 = Instant::now();
+                        e.2
+                    };
+                    let app2 = app.clone();
+                    let label2 = label.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(150));
+                        let st = app2.state::<AppState>();
+                        let fresh = {
+                            let pend = st.resize_pending.lock().unwrap();
+                            matches!(
+                                pend.get(&label2),
+                                Some(p) if p.2 == gen
+                                    && p.3.elapsed() >= Duration::from_millis(140)
+                            )
+                        };
+                        if !fresh {
+                            return;
                         }
-                    }
+                        st.resize_pending.lock().unwrap().remove(&label2);
+                        if let Some(win) = app2.get_webview_window(&label2) {
+                            let Ok(cur) = win.inner_size() else {
+                                return;
+                            };
+                            let cscale = win.scale_factor().unwrap_or(1.0);
+                            let cw = cur.width as f64 / cscale;
+                            let ch = cur.height as f64 / cscale;
+                            let qw = quantize_logical(cw, step, 160.0);
+                            let qh = quantize_logical(ch, step, 96.0);
+                            if (qw - cw).abs() > 0.6 || (qh - ch).abs() > 0.6 {
+                                let _ = win.set_size(LogicalSize::new(qw, qh));
+                            }
+                        }
+                    });
                 }
                 schedule_save(app);
             }
