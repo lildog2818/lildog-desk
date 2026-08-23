@@ -98,7 +98,6 @@ body {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  transition: all 0.15s ease;
   flex-shrink: 0;
 }
 
@@ -154,9 +153,6 @@ body {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.1);
   cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
 }
 
 .auto-toggle::after {
@@ -168,7 +164,6 @@ body {
   height: 12px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.75);
-  transition: transform 0.15s ease;
 }
 
 .auto-toggle.on {
@@ -275,7 +270,6 @@ body {
   margin-left: auto;
   font-size: 10px;
   color: var(--text-dim);
-  transition: transform 0.2s ease;
 }
 
 .group.collapsed .group-chevron {
@@ -298,10 +292,6 @@ body {
   border-radius: 12px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition:
-    transform 0.14s ease,
-    background 0.14s ease,
-    border-color 0.14s ease;
 }
 
 .tile:hover {
@@ -350,7 +340,6 @@ body.drag-active * {
   height: 42px;
   border-radius: 11px;
   object-fit: contain;
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.4));
 }
 
 .tile .fallback {
@@ -415,14 +404,6 @@ body.drag-active * {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.15),
     0 12px 34px rgba(0, 0, 0, 0.5);
-  animation: pop 0.12s ease;
-}
-
-@keyframes pop {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(-4px);
-  }
 }
 
 .ctx-item {
@@ -476,13 +457,6 @@ body.drag-active * {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: fadein 0.14s ease;
-}
-
-@keyframes fadein {
-  from {
-    opacity: 0;
-  }
 }
 
 .dialog {
@@ -494,7 +468,6 @@ body.drag-active * {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     0 20px 60px rgba(0, 0, 0, 0.6);
-  animation: pop 0.16s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 
 .dialog h3 {
@@ -653,7 +626,6 @@ body.drag-active * {
   color: var(--text);
   font-size: 12.5px;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
 
 .btn:hover {
@@ -743,7 +715,6 @@ body.collapsed #pill {
   background: rgba(30, 30, 42, 0.9);
   border: 1px solid var(--stroke-strong);
   opacity: 0;
-  transition: opacity 0.2s ease;
   pointer-events: none;
 }
 
