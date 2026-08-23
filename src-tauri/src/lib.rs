@@ -16,6 +16,7 @@ struct AppState {
     last_save: Mutex<Option<Instant>>,
     latest_pos: Mutex<(i32, i32)>,
     latest_size: Mutex<(f64, f64)>,
+    glass_value: Mutex<f64>,
 }
 
 #[tauri::command]
@@ -191,34 +192,75 @@ fn schedule_save(app: &AppHandle) {
     }
 }
 
-fn clamp_into_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
-    let monitors = match win.available_monitors() {
-        Ok(m) => m,
-        Err(_) => return (x, y),
+fn clamp_fully_in_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
+    let Ok(monitors) = win.available_monitors() else {
+        return (x, y);
     };
-    let wsize = win.outer_size().unwrap_or_default();
-    let mut best = None;
-    for m in &monitors {
-        let pos = m.position();
-        let size = m.size();
-        let inside =
-            x >= pos.x && y >= pos.y && x < pos.x + size.width as i32 && y < pos.y + size.height as i32;
-        if inside {
-            return (x, y);
-        }
-        let dist = (x - pos.x).abs() + (y - pos.y).abs();
-        if best.map_or(true, |(d, _)| dist < d) {
-            best = Some((dist, m));
+    if monitors.is_empty() {
+        return (x, y);
+    }
+    let size = win.outer_size().unwrap_or_default();
+    if size.width == 0 || size.height == 0 {
+        return (x, y);
+    }
+    let w = size.width as i32;
+    let h = size.height as i32;
+
+    let mut best_idx = 0usize;
+    let mut best_inter = -1i64;
+    for (i, m) in monitors.iter().enumerate() {
+        let mp = m.position();
+        let ms = m.size();
+        let ix = (x + w).min(mp.x + ms.width as i32) - x.max(mp.x);
+        let iy = (y + h).min(mp.y + ms.height as i32) - y.max(mp.y);
+        let inter = ix.max(0) as i64 * iy.max(0) as i64;
+        if inter > best_inter {
+            best_inter = inter;
+            best_idx = i;
         }
     }
-    if let Some((_, m)) = best {
-        let pos = m.position();
-        let size = m.size();
-        let max_x = pos.x + size.width as i32 - wsize.width as i32;
-        let max_y = pos.y + size.height as i32 - wsize.height as i32;
-        return (x.clamp(pos.x, max_x.max(pos.x)), y.clamp(pos.y, max_y.max(pos.y)));
+    let mp = monitors[best_idx].position();
+    let ms = monitors[best_idx].size();
+    let max_x = (mp.x + ms.width as i32 - w).max(mp.x);
+    let max_y = (mp.y + ms.height as i32 - h).max(mp.y);
+    (x.clamp(mp.x, max_x), y.clamp(mp.y, max_y))
+}
+
+fn clamp_size_into_monitors(win: &WebviewWindow) {
+    let Ok(monitors) = win.available_monitors() else {
+        return;
+    };
+    if monitors.is_empty() {
+        return;
     }
-    (x, y)
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+
+    let mut best_idx = 0usize;
+    let mut best_inter = -1i64;
+    for (i, m) in monitors.iter().enumerate() {
+        let mp = m.position();
+        let ms = m.size();
+        let ix = (pos.x + size.width as i32).min(mp.x + ms.width as i32) - pos.x.max(mp.x);
+        let iy =
+            (pos.y + size.height as i32).min(mp.y + ms.height as i32) - pos.y.max(mp.y);
+        let inter = ix.max(0) as i64 * iy.max(0) as i64;
+        if inter > best_inter {
+            best_inter = inter;
+            best_idx = i;
+        }
+    }
+    let ms = monitors[best_idx].size();
+    if size.width > ms.width || size.height > ms.height {
+        let _ = win.set_size(tauri::PhysicalSize::new(
+            size.width.min(ms.width),
+            size.height.min(ms.height),
+        ));
+    }
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -235,12 +277,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let (Some(x), Some(y)) = (settings.x, settings.y) {
-        let (cx, cy) = clamp_into_monitors(&win, x, y);
+        let (cx, cy) = clamp_fully_in_monitors(&win, x, y);
         let _ = win.set_position(PhysicalPosition::new(cx, cy));
         *app.state::<AppState>().latest_pos.lock().unwrap() = (cx, cy);
     } else if let Ok(pos) = win.outer_position() {
         *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
     }
+    *app.state::<AppState>().glass_value.lock().unwrap() = settings.glass.clamp(0.0, 1.0);
 
     if settings.collapsed {
         let _ = win.set_size(LogicalSize::new(settings.width.unwrap_or(340.0), 72.0));
@@ -332,6 +375,18 @@ fn apply_glass(win: &WebviewWindow, v: f64) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn reapply_glass_async(app: &AppHandle) {
+    let glass = *app.state::<AppState>().glass_value.lock().unwrap();
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        apply_glass(&win, glass);
+    });
+}
+
 #[tauri::command]
 fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
     let v = v.clamp(0.0, 1.0);
@@ -341,6 +396,7 @@ fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
         let _ = clear_acrylic(&win);
         apply_glass(&win, v);
     }
+    *app.state::<AppState>().glass_value.lock().unwrap() = v;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
     s.glass = v;
@@ -418,11 +474,20 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
-                *app.state::<AppState>().latest_pos.lock().unwrap() = (pos.x, pos.y);
+                if let Some(win) = app.get_webview_window("main") {
+                    let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
+                    if cx != pos.x || cy != pos.y {
+                        let _ = win.set_position(PhysicalPosition::new(cx, cy));
+                    }
+                    *app.state::<AppState>().latest_pos.lock().unwrap() = (cx, cy);
+                }
                 schedule_save(app);
             }
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
+                if let Some(win) = app.get_webview_window("main") {
+                    clamp_size_into_monitors(&win);
+                }
                 let scale = window.scale_factor().unwrap_or(1.0);
                 let lw = size.width as f64 / scale;
                 let lh = size.height as f64 / scale;
@@ -430,6 +495,10 @@ pub fn run() {
                     *app.state::<AppState>().latest_size.lock().unwrap() = (lw, lh);
                 }
                 schedule_save(app);
+            }
+            WindowEvent::Focused(_) => {
+                #[cfg(target_os = "windows")]
+                reapply_glass_async(window.app_handle());
             }
             _ => {}
         })
