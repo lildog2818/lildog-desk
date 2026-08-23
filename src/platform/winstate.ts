@@ -5,6 +5,7 @@ export interface WinState {
   collapsed: boolean;
   bgOpacity: number;
   glass: number;
+  sizeStep: number;
 }
 
 export interface TrayItem {
@@ -25,6 +26,9 @@ export const setBgOpacity = (opacity: number): Promise<void> =>
   invoke("set_bg_opacity", { opacity });
 
 export const setGlass = (v: number): Promise<void> => invoke("set_glass", { v });
+
+export const setSizeStep = (step: number): Promise<void> =>
+  invoke("set_size_step", { step });
 
 export const getAutostart = (): Promise<boolean> => invoke("get_autostart");
 

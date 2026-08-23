@@ -6,6 +6,7 @@ import {
   setAutostart,
   setBgOpacity,
   setGlass,
+  setSizeStep,
 } from "./winstate";
 
 /** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
@@ -23,6 +24,9 @@ export function initAppearance(): void {
 interface SliderSpec {
   label: string;
   initial: number;
+  min: number;
+  max: number;
+  stepSize: number;
   format?: (v: number) => string;
   onLive?: (v: number) => void;
   onCommit: (v: number) => Promise<void> | void;
@@ -47,9 +51,9 @@ function sliderRow(spec: SliderSpec): HTMLDivElement {
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "opacity-slider";
-  slider.min = "0";
-  slider.max = "1";
-  slider.step = "0.01";
+  slider.min = String(spec.min);
+  slider.max = String(spec.max);
+  slider.step = String(spec.stepSize);
   slider.value = String(spec.initial);
 
   let timer = 0;
@@ -109,6 +113,9 @@ export async function buildAppearancePop(
       sliderRow({
         label: "面板透明度",
         initial: clamp01(st.bgOpacity),
+        min: 0,
+        max: 1,
+        stepSize: 0.01,
         onLive: (v) => applyPanelAlpha(v),
         onCommit: (v) => setBgOpacity(v),
       }),
@@ -117,7 +124,21 @@ export async function buildAppearancePop(
       sliderRow({
         label: "毛玻璃强度",
         initial: clamp01(st.glass),
+        min: 0,
+        max: 1,
+        stepSize: 0.01,
         onCommit: (v) => setGlass(v),
+      }),
+    );
+    pop.appendChild(
+      sliderRow({
+        label: "窗口步进",
+        initial: st.sizeStep,
+        min: 8,
+        max: 96,
+        stepSize: 4,
+        format: (v) => `${Math.round(v)}px`,
+        onCommit: (v) => setSizeStep(Math.round(v)),
       }),
     );
     if (withAutostart) pop.appendChild(autostartRow());

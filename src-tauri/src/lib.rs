@@ -63,13 +63,45 @@ fn save_widget_data(
 async fn get_window_state(
     app: AppHandle,
     win: WebviewWindow,
-) -> storage::WinState {
+) -> Result<serde_json::Value, String> {
     let dir = storage::data_dir(&app);
     let settings = storage::load_settings(&dir);
     let mut st = settings.window(win.label());
     st.bg_opacity = settings.global_bg_opacity();
     st.glass = settings.global_glass();
-    st
+    Ok(serde_json::json!({
+        "pinned": st.pinned,
+        "collapsed": st.collapsed,
+        "bgOpacity": st.bg_opacity,
+        "glass": st.glass,
+        "sizeStep": settings.size_step(),
+    }))
+}
+
+/// 设置尺寸步进（逻辑像素），并对所有窗口立即按新步进对齐
+#[tauri::command]
+async fn set_size_step(app: AppHandle, step: f64) -> Result<(), String> {
+    let s32 = (step.round() as u32).clamp(4, 200);
+    *app.state::<AppState>().size_step.lock().unwrap() = s32;
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.size_step = Some(s32);
+    storage::save_settings(&dir, &s);
+
+    for (_, win) in app.webview_windows() {
+        if let Ok(sz) = win.inner_size() {
+            let scale = win.scale_factor().unwrap_or(1.0);
+            let lw = sz.width as f64 / scale;
+            let lh = sz.height as f64 / scale;
+            if lh <= 100.0 || lw <= 100.0 {
+                continue; // 收起为 pill 或极小窗口不参与对齐
+            }
+            let qw = quantize_logical(lw, s32, 160.0);
+            let qh = quantize_logical(lh, s32, 96.0);
+            let _ = win.set_size(LogicalSize::new(qw, qh));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -223,8 +255,9 @@ fn ensure_widget_window(
     let settings = storage::load_settings(&dir);
     let st = settings.window(&label);
     let glass = settings.global_glass();
-    let w = st.width.unwrap_or(width).max(160.0);
-    let h = st.height.unwrap_or(height).max(96.0);
+    let step = *app.state::<AppState>().size_step.lock().unwrap();
+    let w = quantize_logical(st.width.unwrap_or(width).max(160.0), step, 160.0);
+    let h = quantize_logical(st.height.unwrap_or(height).max(96.0), step, 96.0);
 
     let win = WebviewWindowBuilder::new(
         app,
@@ -457,6 +490,15 @@ fn resolve_opencode_key() -> Result<String, String> {
 // ---------------- 几何与位置记忆 ----------------
 
 const SNAP_THRESHOLD_LOGICAL: f64 = 14.0;
+
+/// 将逻辑尺寸量化到步进的整数倍，便于组件窗口对齐拼接
+fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
+    if step < 4 {
+        return v.max(min);
+    }
+    let s = step as f64;
+    ((v / s).round() * s).max(min)
+}
 
 /// 磁性吸附：拖动时窗口边缘贴近其他可见窗口或屏幕边缘则自动贴合。
 fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
@@ -945,6 +987,7 @@ pub fn run() {
             load_widget_data,
             save_widget_data,
             get_window_state,
+            set_size_step,
             set_pinned,
             set_collapsed,
             set_bg_opacity,
@@ -996,6 +1039,16 @@ pub fn run() {
                         .lock()
                         .unwrap()
                         .insert(label.clone(), (lw, lh));
+
+                    // 尺寸阶梯：把窗口尺寸吸附到步进整数倍（跳过收起为 pill 的窗口）
+                    if let Some(win) = app.get_webview_window(&label) {
+                        let step = *app.state::<AppState>().size_step.lock().unwrap();
+                        let qw = quantize_logical(lw, step, 160.0);
+                        let qh = quantize_logical(lh, step, 96.0);
+                        if (qw - lw).abs() > 0.6 || (qh - lh).abs() > 0.6 {
+                            let _ = win.set_size(LogicalSize::new(qw, qh));
+                        }
+                    }
                 }
                 schedule_save(app);
             }
