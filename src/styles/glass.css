@@ -12,6 +12,10 @@
   --hover: rgba(255, 255, 255, 0.09);
   --accent: #ffb84d;
   --radius: 9px;
+  /* 背景三段渐变基色（r,g,b），由主题背景色动态覆盖 */
+  --bg-c1: 40, 40, 55;
+  --bg-c2: 16, 16, 24;
+  --bg-c3: 28, 22, 38;
 }
 
 html,
@@ -43,9 +47,9 @@ body {
     ),
     linear-gradient(
       155deg,
-      rgba(40, 40, 55, var(--panel-a, 0.55)),
-      rgba(16, 16, 24, calc(var(--panel-a, 0.55) * 1.08)) 55%,
-      rgba(28, 22, 38, var(--panel-a, 0.55))
+      rgba(var(--bg-c1), var(--panel-a, 0.55)),
+      rgba(var(--bg-c2), calc(var(--panel-a, 0.55) * 1.08)) 55%,
+      rgba(var(--bg-c3), var(--panel-a, 0.55))
     );
   border: 1px solid var(--stroke);
   box-shadow:
@@ -180,6 +184,36 @@ body {
   border-color: transparent;
   color: #2b1800;
   font-weight: 700;
+}
+
+.theme-box {
+  margin-top: 12px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.swatch {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s ease;
+}
+
+.swatch:hover {
+  transform: scale(1.18);
+}
+
+.swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
 }
 
 .auto-row {

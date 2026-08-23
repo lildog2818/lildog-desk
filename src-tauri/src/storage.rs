@@ -70,11 +70,31 @@ pub struct AppSettings {
     pub size_step: Option<u32>,
     #[serde(default)]
     pub open_windows: Vec<OpenWindow>,
+    /// 主题：主字体色（#rrggbb，None=默认）
+    #[serde(default)]
+    pub text_main: Option<String>,
+    /// 主题：小字体色
+    #[serde(default)]
+    pub text_dim: Option<String>,
+    /// 主题：背景色
+    #[serde(default)]
+    pub bg_color: Option<String>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
 
 impl AppSettings {
+    pub fn text_main(&self) -> String {
+        self.text_main.clone().unwrap_or_default()
+    }
+
+    pub fn text_dim(&self) -> String {
+        self.text_dim.clone().unwrap_or_default()
+    }
+
+    pub fn bg_color(&self) -> String {
+        self.bg_color.clone().unwrap_or_default()
+    }
     pub fn window(&self, label: &str) -> WinState {
         self.windows.get(label).cloned().unwrap_or_default()
     }

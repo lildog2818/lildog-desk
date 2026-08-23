@@ -2,6 +2,58 @@ export function applyPanelAlpha(v: number): void {
   document.documentElement.style.setProperty("--panel-a", String(v));
 }
 
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** 由背景色派生面板三段渐变用的 "r,g,b" 三元组（亮部/暗部/暖部） */
+export function deriveBgTriplets(hex: string): {
+  c1: string;
+  c2: string;
+  c3: string;
+} {
+  const rgb = hexToRgb(hex) ?? [40, 40, 55];
+  const cl = (n: number): number =>
+    Math.round(Math.min(255, Math.max(0, n)));
+  const mixW = (c: number, k: number): number => cl(c + (255 - c) * k);
+  const c1 = `${mixW(rgb[0], 0.1)},${mixW(rgb[1], 0.1)},${mixW(rgb[2], 0.16)}`;
+  const c2 = `${cl(rgb[0] * 0.45)},${cl(rgb[1] * 0.45)},${cl(rgb[2] * 0.52)}`;
+  const c3 = `${cl(rgb[0] * 0.8)},${cl(rgb[1] * 0.74)},${cl(
+    Math.min(255, rgb[2] * 1.02 + 8),
+  )}`;
+  return { c1, c2, c3 };
+}
+
+/** 应用主题色到当前窗口；空值表示恢复默认 */
+export function applyTheme(t: {
+  textMain?: string | null;
+  textDim?: string | null;
+  bgColor?: string | null;
+}): void {
+  const rootStyle = document.documentElement.style;
+  const putColor = (name: string, v?: string | null): void => {
+    if (v && /^#[0-9a-fA-F]{6}$/.test(v)) rootStyle.setProperty(name, v);
+    else rootStyle.removeProperty(name);
+  };
+  putColor("--text", t.textMain ?? null);
+  putColor("--text-dim", t.textDim ?? null);
+
+  const bg = t.bgColor ?? null;
+  if (bg && /^#[0-9a-fA-F]{6}$/.test(bg)) {
+    const { c1, c2, c3 } = deriveBgTriplets(bg);
+    rootStyle.setProperty("--bg-c1", c1);
+    rootStyle.setProperty("--bg-c2", c2);
+    rootStyle.setProperty("--bg-c3", c3);
+  } else {
+    rootStyle.removeProperty("--bg-c1");
+    rootStyle.removeProperty("--bg-c2");
+    rootStyle.removeProperty("--bg-c3");
+  }
+}
+
 let pulseInstalled = false;
 
 /** 窗口尺寸变化时的动态放大反馈：面板轻微弹跳一下 */

@@ -6,6 +6,15 @@ export interface WinState {
   bgOpacity: number;
   glass: number;
   sizeStep: number;
+  textMain?: string | null;
+  textDim?: string | null;
+  bgColor?: string | null;
+}
+
+export interface ThemeCfg {
+  textMain?: string | null;
+  textDim?: string | null;
+  bgColor?: string | null;
 }
 
 export interface TrayItem {
@@ -29,6 +38,13 @@ export const setGlass = (v: number): Promise<void> => invoke("set_glass", { v })
 
 export const setSizeStep = (step: number): Promise<void> =>
   invoke("set_size_step", { step });
+
+export const setTheme = (theme: ThemeCfg): Promise<void> =>
+  invoke("set_theme", {
+    textMain: theme.textMain ?? "",
+    textDim: theme.textDim ?? "",
+    bgColor: theme.bgColor ?? "",
+  });
 
 export const getAutostart = (): Promise<boolean> => invoke("get_autostart");
 

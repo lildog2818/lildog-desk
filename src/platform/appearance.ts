@@ -1,23 +1,38 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { applyPanelAlpha, installResizePulse, toast } from "./shell";
+import {
+  applyPanelAlpha,
+  applyTheme,
+  installResizePulse,
+  toast,
+} from "./shell";
 import {
   getAutostart,
   getWindowState,
   setAutostart,
   setBgOpacity,
+  setTheme,
   setSizeStep,
+  type ThemeCfg,
 } from "./winstate";
 
 /** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
 export function initAppearance(): void {
   installResizePulse();
   try {
-    void getWindowState().then((st) => applyPanelAlpha(st.bgOpacity));
+    void getWindowState()
+      .then((st) => {
+        applyPanelAlpha(st.bgOpacity);
+        applyTheme(st);
+      })
+      .catch(() => applyPanelAlpha(0.55));
   } catch {
     applyPanelAlpha(0.55);
   }
   void getCurrentWebview()
     .listen<number>("bg-opacity", (ev) => applyPanelAlpha(ev.payload))
+    .catch(() => {});
+  void getCurrentWebview()
+    .listen<ThemeCfg>("theme", (ev) => applyTheme(ev.payload ?? {}))
     .catch(() => {});
 }
 
@@ -111,6 +126,84 @@ function stepLadderRow(initial: number): HTMLDivElement {
   return wrap;
 }
 
+/** 24 色调色板（含默认背景 #282837 与品牌蓝 #4d6bfe） */
+const PALETTE_24 = [
+  "#ffffff",
+  "#c9d1d9",
+  "#8b949e",
+  "#57606a",
+  "#282837",
+  "#11131a",
+  "#000000",
+  "#ff6b6b",
+  "#ff8a3d",
+  "#ffb84d",
+  "#ffd166",
+  "#a3e635",
+  "#34d399",
+  "#10b981",
+  "#2dd4bf",
+  "#22d3ee",
+  "#38bdf8",
+  "#3b82f6",
+  "#4d6bfe",
+  "#8b5cf6",
+  "#a855f7",
+  "#ec4899",
+  "#f472b6",
+  "#f43f5e",
+];
+
+/** 各主题项的展示用兜底色（未自定义时高亮该色） */
+const THEME_FALLBACK: ThemeCfg = {
+  textMain: "#ffffff",
+  textDim: "#8b949e",
+  bgColor: "#282837",
+};
+
+/** 三组色板：主字体 / 小字体 / 背景 */
+function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
+  const box = document.createElement("div");
+  box.className = "theme-box";
+
+  const mkRow = (labelText: string, key: keyof ThemeCfg): void => {
+    const head = document.createElement("div");
+    head.className = "opacity-head";
+    const title = document.createElement("span");
+    title.textContent = labelText;
+    head.appendChild(title);
+
+    const grid = document.createElement("div");
+    grid.className = "swatch-grid";
+    const paint = (): void => {
+      grid.querySelectorAll<HTMLButtonElement>(".swatch").forEach((el) => {
+        el.classList.toggle("on", el.dataset.c === initial[key]);
+      });
+    };
+    for (const c of PALETTE_24) {
+      const s = document.createElement("button");
+      s.className = "swatch";
+      s.style.background = c;
+      s.dataset.c = c;
+      s.title = c;
+      s.onclick = () => {
+        initial[key] = c;
+        paint();
+        applyTheme(initial);
+        void setTheme(initial).catch((e) => toast(String(e)));
+      };
+      grid.appendChild(s);
+    }
+    paint();
+    box.append(head, grid);
+  };
+
+  mkRow("主字体色", "textMain");
+  mkRow("小字体色", "textDim");
+  mkRow("背景色", "bgColor");
+  return box;
+}
+
 export function autostartRow(): HTMLDivElement {
   const autoRow = document.createElement("div");
   autoRow.className = "auto-row";
@@ -157,6 +250,13 @@ export async function buildAppearancePop(
       }),
     );
     pop.appendChild(stepLadderRow(st.sizeStep));
+    pop.appendChild(
+      buildThemeRows({
+        textMain: st.textMain || THEME_FALLBACK.textMain!,
+        textDim: st.textDim || THEME_FALLBACK.textDim!,
+        bgColor: st.bgColor || THEME_FALLBACK.bgColor!,
+      }),
+    );
     if (withAutostart) pop.appendChild(autostartRow());
   } catch {
     /* window state unavailable */
