@@ -362,13 +362,43 @@ fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+fn dwm_set_attr(win: &WebviewWindow, attr: u32, value: u32) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
+
+    let Ok(raw) = win.hwnd() else {
+        return false;
+    };
+    let hwnd = HWND(raw.0);
+    let v = value as i32;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWINDOWATTRIBUTE(attr as i32),
+            &v as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        )
+        .is_ok()
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn apply_glass(win: &WebviewWindow, v: f64) {
     use window_vibrancy::{apply_acrylic, clear_acrylic};
+
     let v = v.clamp(0.0, 1.0);
+    let _ = clear_acrylic(win);
+
     if v <= 0.001 {
-        let _ = clear_acrylic(win);
+        dwm_set_attr(win, 38, 1);
         return;
     }
+
+    dwm_set_attr(win, 20, 1);
+    if dwm_set_attr(win, 38, 2) {
+        return;
+    }
+
     let a = (v * 255.0).round().clamp(4.0, 250.0) as u8;
     if let Err(e) = apply_acrylic(win, Some((18, 18, 24, a))) {
         eprintln!("acrylic unavailable: {e}");
@@ -382,7 +412,9 @@ fn reapply_glass_async(app: &AppHandle) {
         return;
     };
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(60));
+        apply_glass(&win.clone(), glass);
+        std::thread::sleep(Duration::from_millis(340));
         apply_glass(&win, glass);
     });
 }
@@ -391,11 +423,7 @@ fn reapply_glass_async(app: &AppHandle) {
 fn set_glass(app: AppHandle, win: WebviewWindow, v: f64) -> Result<(), String> {
     let v = v.clamp(0.0, 1.0);
     #[cfg(target_os = "windows")]
-    {
-        use window_vibrancy::clear_acrylic;
-        let _ = clear_acrylic(&win);
-        apply_glass(&win, v);
-    }
+    apply_glass(&win, v);
     *app.state::<AppState>().glass_value.lock().unwrap() = v;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
