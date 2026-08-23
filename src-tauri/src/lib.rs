@@ -500,6 +500,7 @@ fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
 }
 
 /// 磁性吸附：拖动时窗口边缘贴近其他可见窗口或屏幕边缘则自动贴合。
+/// 窗口之间允许重叠；除首尾拼接外，还支持同边对齐（左/右/上/下）。
 fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
     let Ok(scale) = win.scale_factor() else {
         return (x, y);
@@ -542,6 +543,14 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
             } else if (r - ol).abs() <= th {
                 l = ol - w;
                 r = ol;
+            } else if (l - ol).abs() <= th {
+                // 允许重叠：左边缘与对方左边缘对齐
+                l = ol;
+                r = l + w;
+            } else if (r - or_).abs() <= th {
+                // 右边缘对齐
+                r = or_;
+                l = r - w;
             }
         }
         let h_overlap = l < or_ && r > ol;
@@ -552,6 +561,14 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
             } else if (b - ot).abs() <= th {
                 t = ot - h;
                 b = ot;
+            } else if (t - ot).abs() <= th {
+                // 允许重叠：上边缘对齐
+                t = ot;
+                b = t + h;
+            } else if (b - ob).abs() <= th {
+                // 下边缘对齐
+                b = ob;
+                t = b - h;
             }
         }
     }
