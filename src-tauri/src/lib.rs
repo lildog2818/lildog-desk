@@ -53,11 +53,58 @@ async fn get_icon(app: AppHandle, path: String) -> String {
 
 #[tauri::command]
 fn open_target(target: String) -> Result<(), String> {
-    Command::new("explorer")
-        .arg(&target)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        if target.trim().is_empty() {
+            return Err("目标路径为空".into());
+        }
+        let wide: Vec<u16> = std::ffi::OsStr::new(&target)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let hinst = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR::null(),
+                PCWSTR(wide.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            )
+        };
+        let code = hinst.0 as isize;
+        if code <= 32 {
+            return Err(shell_open_error(code));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn shell_open_error(code: isize) -> String {
+    let msg = match code {
+        0 | 8 => "内存不足",
+        2 => "文件不存在",
+        3 => "路径不存在",
+        5 => "拒绝访问",
+        11 => "可执行文件无效或损坏",
+        26 => "发生共享冲突",
+        27 => "文件关联信息不完整",
+        28 | 29 | 30 => "动态数据交换失败",
+        31 => "没有与之关联的应用",
+        32 => "缺少依赖组件",
+        _ => "打开失败",
+    };
+    format!("{msg}（错误码 {code}）")
 }
 
 #[tauri::command]
