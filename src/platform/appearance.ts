@@ -5,7 +5,6 @@ import {
   getWindowState,
   setAutostart,
   setBgOpacity,
-  setGlass,
   setSizeStep,
 } from "./winstate";
 
@@ -118,16 +117,6 @@ export async function buildAppearancePop(
         stepSize: 0.01,
         onLive: (v) => applyPanelAlpha(v),
         onCommit: (v) => setBgOpacity(v),
-      }),
-    );
-    pop.appendChild(
-      sliderRow({
-        label: "毛玻璃强度",
-        initial: clamp01(st.glass),
-        min: 0,
-        max: 1,
-        stepSize: 0.01,
-        onCommit: (v) => setGlass(v),
       }),
     );
     pop.appendChild(
