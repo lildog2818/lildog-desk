@@ -43,6 +43,7 @@ const FALLBACK: Record<string, string> = {
 
 let didDrag = false;
 const iconPending = new Set<string>();
+const iconFailed = new Set<string>();
 
 function toast(msg: string): void {
   let el = document.getElementById("toast");
@@ -51,9 +52,12 @@ function toast(msg: string): void {
     el.id = "toast";
     document.body.appendChild(el);
   }
+  const prev = Number((el as HTMLElement & { _t?: number })._t ?? 0);
+  window.clearTimeout(prev);
   el.textContent = msg;
   el.classList.add("show");
-  window.setTimeout(() => el.classList.remove("show"), 1600);
+  const t = window.setTimeout(() => el.classList.remove("show"), 1600);
+  (el as HTMLElement & { _t?: number })._t = t;
 }
 
 function closeMenus(): void {
@@ -252,7 +256,7 @@ async function importPaths(paths: string[], groupId: string): Promise<void> {
   const resolved = await invoke<
     Array<{ kind: Item["kind"]; name: string; target: string; args: string | null }>
   >("resolve_paths", { paths });
-  let added = 0;
+  const added: string[] = [];
   for (const r of resolved) {
     if (state.items.some((i) => i.target.toLowerCase() === r.target.toLowerCase()))
       continue;
@@ -265,33 +269,38 @@ async function importPaths(paths: string[], groupId: string): Promise<void> {
       icon: null,
       groupId,
     });
-    added++;
+    added.push(r.target);
   }
-  if (added > 0) {
+  if (added.length > 0) {
     scheduleSave();
     render();
-    toast(added > 1 ? `已导入 ${added} 项` : "已导入");
-    for (const r of resolved) void fetchIcon(r.target);
+    toast(added.length > 1 ? `已导入 ${added.length} 项` : "已导入");
+    for (const t of added) void fetchIcon(t);
   } else {
     toast("没有新增项");
   }
 }
 
 async function fetchIcon(target: string): Promise<void> {
-  if (iconPending.has(target.toLowerCase())) return;
-  iconPending.add(target.toLowerCase());
+  const key = target.toLowerCase();
+  if (iconPending.has(key) || iconFailed.has(key)) return;
+  iconPending.add(key);
   try {
     const p = await invoke<string>("get_icon", { path: target });
     const item = state.items.find(
-      (i) => i.target.toLowerCase() === target.toLowerCase(),
+      (i) => i.target.toLowerCase() === key,
     );
     if (item && p) {
       item.icon = p;
       scheduleSave();
       render();
+    } else if (!p) {
+      iconFailed.add(key);
     }
+  } catch {
+    iconFailed.add(key);
   } finally {
-    iconPending.delete(target.toLowerCase());
+    iconPending.delete(key);
   }
 }
 
@@ -735,9 +744,30 @@ btnCollapse.onclick = () => {
   void invoke("set_collapsed", { collapsed: true });
 };
 
-pill.onclick = () => {
-  document.body.classList.remove("collapsed");
-  void invoke("set_collapsed", { collapsed: false });
+let pillPress: { x: number; y: number } | null = null;
+
+pill.onpointerdown = (ev) => {
+  if (ev.button !== 0) return;
+  pillPress = { x: ev.clientX, y: ev.clientY };
+  const move = (mv: PointerEvent) => {
+    if (
+      pillPress &&
+      Math.hypot(mv.clientX - pillPress.x, mv.clientY - pillPress.y) > 6
+    ) {
+      pillPress = null;
+      window.removeEventListener("pointermove", move);
+      void getCurrentWindow().startDragging();
+    }
+  };
+  const finish = () => {
+    window.removeEventListener("pointermove", move);
+    if (!pillPress) return;
+    pillPress = null;
+    document.body.classList.remove("collapsed");
+    void invoke("set_collapsed", { collapsed: false });
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", finish, { once: true });
 };
 
 header.addEventListener("pointerdown", (ev) => {
