@@ -54,9 +54,15 @@ fn save_widget_data(
 }
 
 // ---------------- 窗口状态 ----------------
+//
+// 注意：涉及窗口 getter/setter 的命令必须声明为 async，
+// 同步命令在主线程执行，而窗口操作需要事件循环响应，会造成死锁。
 
 #[tauri::command]
-fn get_window_state(app: AppHandle, win: WebviewWindow) -> storage::WinState {
+async fn get_window_state(
+    app: AppHandle,
+    win: WebviewWindow,
+) -> storage::WinState {
     let dir = storage::data_dir(&app);
     let settings = storage::load_settings(&dir);
     let mut st = settings.window(win.label());
@@ -65,7 +71,11 @@ fn get_window_state(app: AppHandle, win: WebviewWindow) -> storage::WinState {
 }
 
 #[tauri::command]
-fn set_pinned(app: AppHandle, win: WebviewWindow, pin: bool) -> Result<(), String> {
+async fn set_pinned(
+    app: AppHandle,
+    win: WebviewWindow,
+    pin: bool,
+) -> Result<(), String> {
     win.set_always_on_top(pin).map_err(|e| e.to_string())?;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
@@ -75,7 +85,7 @@ fn set_pinned(app: AppHandle, win: WebviewWindow, pin: bool) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn set_collapsed(
+async fn set_collapsed(
     app: AppHandle,
     win: WebviewWindow,
     collapsed: bool,
@@ -275,7 +285,7 @@ fn ensure_widget_window(
 }
 
 #[tauri::command]
-fn open_widget_window(
+async fn open_widget_window(
     app: AppHandle,
     widget_id: String,
     title: String,
@@ -286,7 +296,7 @@ fn open_widget_window(
 }
 
 #[tauri::command]
-fn toggle_widget_window(
+async fn toggle_widget_window(
     app: AppHandle,
     widget_id: String,
     title: String,
@@ -306,7 +316,7 @@ fn toggle_widget_window(
 // ---------------- 托盘 ----------------
 
 #[tauri::command]
-fn update_tray_widgets(
+async fn update_tray_widgets(
     app: AppHandle,
     items: Vec<TrayItemDto>,
 ) -> Result<(), String> {
@@ -761,13 +771,17 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         items.into_iter().find(|e| e.id == widget_id)
                     };
                     if let Some(e) = entry {
-                        let _ = toggle_widget_window_cmd(
-                            app,
-                            &e.id,
-                            &e.title,
-                            e.width,
-                            e.height,
-                        );
+                        // 菜单事件在主线程回调，建窗必须离开主线程，否则死锁
+                        let app2 = app.clone();
+                        std::thread::spawn(move || {
+                            let _ = toggle_widget_window_cmd(
+                                &app2,
+                                &e.id,
+                                &e.title,
+                                e.width,
+                                e.height,
+                            );
+                        });
                     }
                 }
             }
