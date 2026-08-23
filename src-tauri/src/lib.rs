@@ -30,6 +30,9 @@ struct AppState {
     last_save: Mutex<Option<Instant>>,
     latest_pos: Mutex<HashMap<String, (i32, i32)>>,
     latest_size: Mutex<HashMap<String, (f64, f64)>>,
+    /// 已触发吸附并处于锁定态的窗口：label -> 吸附落点。
+    /// 锁定期间不再重复吸附，避免“吸住后拖不动”。
+    snap_locks: Mutex<HashMap<String, (i32, i32)>>,
     glass_value: Mutex<f64>,
     size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
@@ -250,6 +253,12 @@ fn ensure_widget_window(
         let _ = existing.set_focus();
         return Ok(());
     }
+    // 新建窗口前清掉历史吸附锁，避免沿用旧位置的锁定态
+    app.state::<AppState>()
+        .snap_locks
+        .lock()
+        .unwrap()
+        .remove(&label);
 
     let dir = storage::data_dir(app);
     let settings = storage::load_settings(&dir);
@@ -489,7 +498,9 @@ fn resolve_opencode_key() -> Result<String, String> {
 
 // ---------------- 几何与位置记忆 ----------------
 
-const SNAP_THRESHOLD_LOGICAL: f64 = 14.0;
+const SNAP_ENGAGE_LOGICAL: f64 = 12.0;
+/// 迟滞脱离：吸附锁定后，累计位移超过该距离才解除锁定（远大于吸附感应距离）
+const SNAP_ESCAPE_LOGICAL: f64 = 28.0;
 
 /// 将逻辑尺寸量化到步进的整数倍，便于组件窗口对齐拼接
 fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
@@ -505,7 +516,7 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
     let Ok(scale) = win.scale_factor() else {
         return (x, y);
     };
-    let th = (SNAP_THRESHOLD_LOGICAL * scale).round() as i32;
+    let th = (SNAP_ENGAGE_LOGICAL * scale).round() as i32;
     let Ok(size) = win.outer_size() else {
         return (x, y);
     };
@@ -1012,15 +1023,41 @@ pub fn run() {
                 let label = window.label().to_string();
                 if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
-                    let (sx, sy) = snap_position(&win, app, cx, cy);
-                    if sx != pos.x || sy != pos.y {
-                        let _ = win.set_position(PhysicalPosition::new(sx, sy));
+                    let scale = win.scale_factor().unwrap_or(1.0);
+                    let escape_px =
+                        (SNAP_ESCAPE_LOGICAL * scale).round() as i32;
+                    let state = app.state::<AppState>();
+                    let mut latest = state.latest_pos.lock().unwrap();
+                    let mut locks = state.snap_locks.lock().unwrap();
+
+                    // 迟滞吸附：锁定期间窗口完全跟手，累计位移超过脱离阈值才解锁
+                    let mut hold = false;
+                    if let Some(origin) = locks.get(&label).copied() {
+                        if (cx - origin.0).abs() > escape_px
+                            || (cy - origin.1).abs() > escape_px
+                        {
+                            locks.remove(&label);
+                        } else {
+                            hold = true;
+                        }
                     }
-                    app.state::<AppState>()
-                        .latest_pos
-                        .lock()
-                        .unwrap()
-                        .insert(label.clone(), (sx, sy));
+
+                    let final_pos = if hold {
+                        (cx, cy)
+                    } else {
+                        let (sx, sy) = snap_position(&win, app, cx, cy);
+                        if sx != cx || sy != cy {
+                            locks.insert(label.clone(), (sx, sy));
+                            (sx, sy)
+                        } else {
+                            (cx, cy)
+                        }
+                    };
+                    if final_pos.0 != pos.x || final_pos.1 != pos.y {
+                        let _ =
+                            win.set_position(PhysicalPosition::new(final_pos.0, final_pos.1));
+                    }
+                    latest.insert(label.clone(), final_pos);
                 }
                 schedule_save(app);
             }
