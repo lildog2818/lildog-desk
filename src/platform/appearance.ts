@@ -1,5 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { applyPanelAlpha, toast } from "./shell";
+import { applyPanelAlpha, installResizePulse, toast } from "./shell";
 import {
   getAutostart,
   getWindowState,
@@ -10,6 +10,7 @@ import {
 
 /** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
 export function initAppearance(): void {
+  installResizePulse();
   try {
     void getWindowState().then((st) => applyPanelAlpha(st.bgOpacity));
   } catch {
@@ -74,6 +75,42 @@ function sliderRow(spec: SliderSpec): HTMLDivElement {
   return wrap;
 }
 
+/** 阶梯档位选择：离散的大步进值，调节大小时产生明显的分级放大效果 */
+function stepLadderRow(initial: number): HTMLDivElement {
+  const options = [32, 48, 64, 80, 96];
+  const wrap = document.createElement("div");
+  const head = document.createElement("div");
+  head.className = "opacity-head";
+  const title = document.createElement("span");
+  title.textContent = "窗口步进";
+  const val = document.createElement("span");
+  val.className = "opacity-val";
+  const nearest = options.reduce((a, b) =>
+    Math.abs(b - initial) < Math.abs(a - initial) ? b : a,
+  );
+  val.textContent = `${nearest}px`;
+  head.append(title, val);
+
+  const row = document.createElement("div");
+  row.className = "ladder-row";
+  for (const opt of options) {
+    const b = document.createElement("button");
+    b.className = "ladder-btn" + (opt === nearest ? " on" : "");
+    b.textContent = String(opt);
+    b.onclick = () => {
+      val.textContent = `${opt}px`;
+      row
+        .querySelectorAll(".ladder-btn")
+        .forEach((el) => el.classList.remove("on"));
+      b.classList.add("on");
+      void setSizeStep(opt).catch((e) => toast(String(e)));
+    };
+    row.appendChild(b);
+  }
+  wrap.append(head, row);
+  return wrap;
+}
+
 export function autostartRow(): HTMLDivElement {
   const autoRow = document.createElement("div");
   autoRow.className = "auto-row";
@@ -119,17 +156,7 @@ export async function buildAppearancePop(
         onCommit: (v) => setBgOpacity(v),
       }),
     );
-    pop.appendChild(
-      sliderRow({
-        label: "窗口步进",
-        initial: st.sizeStep,
-        min: 8,
-        max: 96,
-        stepSize: 4,
-        format: (v) => `${Math.round(v)}px`,
-        onCommit: (v) => setSizeStep(Math.round(v)),
-      }),
-    );
+    pop.appendChild(stepLadderRow(st.sizeStep));
     if (withAutostart) pop.appendChild(autostartRow());
   } catch {
     /* window state unavailable */
@@ -144,7 +171,7 @@ export async function openAppearanceMenu(
 ): Promise<void> {
   const rect = anchor.getBoundingClientRect();
   const pop = await buildAppearancePop(withAutostart);
-  pop.style.left = `${Math.max(8, rect.right - 200)}px`;
+  pop.style.left = `${Math.max(8, rect.right - 232)}px`;
   pop.style.top = `${rect.bottom + 6}px`;
   document.body.appendChild(pop);
 }

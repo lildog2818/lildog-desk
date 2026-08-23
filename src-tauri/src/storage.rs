@@ -77,7 +77,7 @@ impl AppSettings {
     }
 
     pub fn size_step(&self) -> u32 {
-        self.size_step.unwrap_or(20).clamp(4, 200)
+        self.size_step.unwrap_or(48).clamp(8, 200)
     }
 
     pub fn update_window<F: FnOnce(&mut WinState)>(&mut self, label: &str, f: F) {

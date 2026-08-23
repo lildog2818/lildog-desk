@@ -2,6 +2,24 @@ export function applyPanelAlpha(v: number): void {
   document.documentElement.style.setProperty("--panel-a", String(v));
 }
 
+let pulseInstalled = false;
+
+/** 窗口尺寸变化时的动态放大反馈：面板轻微弹跳一下 */
+export function installResizePulse(): void {
+  if (pulseInstalled) return;
+  pulseInstalled = true;
+  let timer = 0;
+  window.addEventListener("resize", () => {
+    const app = document.getElementById("app");
+    if (!app) return;
+    app.classList.remove("size-pop");
+    void app.offsetWidth; // 重置动画
+    app.classList.add("size-pop");
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => app.classList.remove("size-pop"), 260);
+  });
+}
+
 export function toast(msg: string): void {
   let el = document.getElementById("toast");
   if (!el) {
