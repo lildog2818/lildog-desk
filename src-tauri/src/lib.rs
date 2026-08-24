@@ -383,6 +383,16 @@ async fn toggle_widget_window(
     ensure_widget_window(&app, &widget_id, &title, width, height)
 }
 
+/// 仅隐藏组件悬浮窗；不存在时静默成功（区别于 toggle 的"未开则打开"）
+#[tauri::command]
+async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), String> {
+    let label = format!("w-{widget_id}");
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.hide();
+    }
+    Ok(())
+}
+
 // ---------------- 托盘 ----------------
 
 #[tauri::command]
@@ -1105,6 +1115,7 @@ pub fn run() {
             set_glass,
             open_widget_window,
             toggle_widget_window,
+            close_widget_window,
             update_tray_widgets,
             fetch_json,
             resolve_opencode_key,

@@ -74,5 +74,8 @@ export const toggleWidgetWindow = (
     height,
   });
 
+export const closeWidgetWindow = (widgetId: string): Promise<void> =>
+  invoke("close_widget_window", { widgetId });
+
 export const updateTrayWidgets = (items: TrayItem[]): Promise<void> =>
   invoke("update_tray_widgets", { items });

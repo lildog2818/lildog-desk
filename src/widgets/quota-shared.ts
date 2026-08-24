@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { widgetLoad, widgetSave } from "../platform/widget-data";
+import { getWindowState, setPinned } from "../platform/winstate";
 import "./../styles/quota.css";
 
 export interface QuotaConfig {
@@ -162,14 +163,20 @@ export function buildWidgetShell(
   btnGear.className = "icon-btn";
   btnGear.title = "设置";
   btnGear.textContent = "⚙";
-  const btnClose = document.createElement("button");
-  btnClose.className = "icon-btn";
-  btnClose.title = "收起";
-  btnClose.textContent = "✕";
-  btnClose.onclick = () => {
-    void getCurrentWindow().hide();
+  // 固定（置顶）开关，与快捷启动组件一致
+  const btnPin = document.createElement("button");
+  btnPin.className = "icon-btn";
+  btnPin.title = "钉住置顶";
+  btnPin.textContent = "📌";
+  void getWindowState()
+    .then((st) => btnPin.classList.toggle("active", st.pinned))
+    .catch(() => {});
+  btnPin.onclick = () => {
+    const next = !btnPin.classList.contains("active");
+    btnPin.classList.toggle("active", next);
+    void setPinned(next).catch(() => btnPin.classList.toggle("active", !next));
   };
-  header.append(btnRefresh, btnGear, btnClose);
+  header.append(btnRefresh, btnGear, btnPin);
 
   header.addEventListener("pointerdown", (ev) => {
     const t = ev.target as HTMLElement;

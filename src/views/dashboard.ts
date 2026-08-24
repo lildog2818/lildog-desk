@@ -9,6 +9,7 @@ import {
 } from "../platform/shell";
 import { openAppearanceMenu } from "../platform/appearance";
 import {
+  closeWidgetWindow,
   openWidgetWindow,
   updateTrayWidgets,
 } from "../platform/winstate";
@@ -49,6 +50,7 @@ async function cardSummary(w: WidgetDef): Promise<string> {
 function buildCard(w: WidgetDef): HTMLDivElement {
   const card = document.createElement("div");
   card.className = "wcard";
+  card.title = "双击弹出悬浮窗";
   card.style.setProperty("--wc", w.color);
 
   const icon = document.createElement("div");
@@ -68,20 +70,20 @@ function buildCard(w: WidgetDef): HTMLDivElement {
   });
   meta.append(name, desc);
 
+  // 悬浮按钮位：关闭该组件的悬浮窗（原"弹出"位）
   const pop = document.createElement("button");
   pop.className = "wcard-pop";
-  pop.title = "弹出为悬浮窗";
-  pop.textContent = "⤢";
+  pop.title = "关闭悬浮窗";
+  pop.textContent = "✕";
   pop.onclick = (ev) => {
     ev.stopPropagation();
-    void openWidgetWindow(w.id, `lildog · ${w.name}`, w.width, w.height).catch(
-      (e) => toast(String(e)),
-    );
+    void closeWidgetWindow(w.id).catch((e) => toast(String(e)));
   };
 
   card.append(icon, meta, pop);
 
-  card.onclick = () => {
+  // 双击卡片弹出悬浮窗
+  card.ondblclick = () => {
     void openWidgetWindow(w.id, `lildog · ${w.name}`, w.width, w.height).catch(
       (e) => toast(String(e)),
     );
