@@ -155,13 +155,12 @@ const PALETTE_24 = [
 ];
 
 /** 各主题项的展示用兜底色（未自定义时高亮该色） */
-const THEME_FALLBACK: ThemeCfg = {
-  textMain: "#ffffff",
-  textDim: "#8b949e",
+const THEME_FALLBACK: Required<ThemeCfg> = {
+  fontColor: "#ffffff",
   bgColor: "#282837",
 };
 
-/** 三组色板：主字体 / 小字体 / 背景 */
+/** 两组色板：字体 / 背景（小字色由字体色自动派生） */
 function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
   const box = document.createElement("div");
   box.className = "theme-box";
@@ -198,9 +197,8 @@ function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
     box.append(head, grid);
   };
 
-  mkRow("主字体色", "textMain");
-  mkRow("小字体色", "textDim");
-  mkRow("背景色", "bgColor");
+  mkRow("字体颜色", "fontColor");
+  mkRow("背景颜色", "bgColor");
   return box;
 }
 
@@ -252,9 +250,8 @@ export async function buildAppearancePop(
     pop.appendChild(stepLadderRow(st.sizeStep));
     pop.appendChild(
       buildThemeRows({
-        textMain: st.textMain || THEME_FALLBACK.textMain!,
-        textDim: st.textDim || THEME_FALLBACK.textDim!,
-        bgColor: st.bgColor || THEME_FALLBACK.bgColor!,
+        fontColor: st.fontColor || THEME_FALLBACK.fontColor,
+        bgColor: st.bgColor || THEME_FALLBACK.bgColor,
       }),
     );
     if (withAutostart) pop.appendChild(autostartRow());

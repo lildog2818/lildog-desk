@@ -27,10 +27,9 @@ export function deriveBgTriplets(hex: string): {
   return { c1, c2, c3 };
 }
 
-/** 应用主题色到当前窗口；空值表示恢复默认 */
+/** 应用主题色到当前窗口；空值表示恢复默认。小字色由 CSS 依 --text 自动派生 */
 export function applyTheme(t: {
-  textMain?: string | null;
-  textDim?: string | null;
+  fontColor?: string | null;
   bgColor?: string | null;
 }): void {
   const rootStyle = document.documentElement.style;
@@ -38,8 +37,7 @@ export function applyTheme(t: {
     if (v && /^#[0-9a-fA-F]{6}$/.test(v)) rootStyle.setProperty(name, v);
     else rootStyle.removeProperty(name);
   };
-  putColor("--text", t.textMain ?? null);
-  putColor("--text-dim", t.textDim ?? null);
+  putColor("--text", t.fontColor ?? null);
 
   const bg = t.bgColor ?? null;
   if (bg && /^#[0-9a-fA-F]{6}$/.test(bg)) {

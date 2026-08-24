@@ -6,14 +6,12 @@ export interface WinState {
   bgOpacity: number;
   glass: number;
   sizeStep: number;
-  textMain?: string | null;
-  textDim?: string | null;
+  fontColor?: string | null;
   bgColor?: string | null;
 }
 
 export interface ThemeCfg {
-  textMain?: string | null;
-  textDim?: string | null;
+  fontColor?: string | null;
   bgColor?: string | null;
 }
 
@@ -41,8 +39,7 @@ export const setSizeStep = (step: number): Promise<void> =>
 
 export const setTheme = (theme: ThemeCfg): Promise<void> =>
   invoke("set_theme", {
-    textMain: theme.textMain ?? "",
-    textDim: theme.textDim ?? "",
+    fontColor: theme.fontColor ?? "",
     bgColor: theme.bgColor ?? "",
   });
 

@@ -70,12 +70,11 @@ pub struct AppSettings {
     pub size_step: Option<u32>,
     #[serde(default)]
     pub open_windows: Vec<OpenWindow>,
-    /// 主题：主字体色（#rrggbb，None=默认）
+    /// 主题：字体色（#rrggbb，None=默认；旧版 textMain 自动回退）
+    #[serde(default)]
+    pub font_color: Option<String>,
     #[serde(default)]
     pub text_main: Option<String>,
-    /// 主题：小字体色
-    #[serde(default)]
-    pub text_dim: Option<String>,
     /// 主题：背景色
     #[serde(default)]
     pub bg_color: Option<String>,
@@ -84,12 +83,11 @@ pub struct AppSettings {
 }
 
 impl AppSettings {
-    pub fn text_main(&self) -> String {
-        self.text_main.clone().unwrap_or_default()
-    }
-
-    pub fn text_dim(&self) -> String {
-        self.text_dim.clone().unwrap_or_default()
+    pub fn font_color(&self) -> String {
+        self.font_color
+            .clone()
+            .or_else(|| self.text_main.clone())
+            .unwrap_or_default()
     }
 
     pub fn bg_color(&self) -> String {

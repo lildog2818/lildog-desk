@@ -8,7 +8,8 @@
   --stroke: rgba(255, 255, 255, 0.16);
   --stroke-strong: rgba(255, 255, 255, 0.28);
   --text: rgba(255, 255, 255, 0.92);
-  --text-dim: rgba(255, 255, 255, 0.55);
+  /* 小字体色随主字体色自动派生（同色系、降低不透明度） */
+  --text-dim: color-mix(in srgb, var(--text) 58%, transparent);
   --hover: rgba(255, 255, 255, 0.09);
   --accent: #ffb84d;
   --radius: 9px;

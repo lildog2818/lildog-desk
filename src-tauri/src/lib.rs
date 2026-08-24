@@ -91,8 +91,7 @@ async fn get_window_state(
         "bgOpacity": st.bg_opacity,
         "glass": st.glass,
         "sizeStep": settings.size_step(),
-        "textMain": settings.text_main(),
-        "textDim": settings.text_dim(),
+        "fontColor": settings.font_color(),
         "bgColor": settings.bg_color(),
     }))
 }
@@ -104,30 +103,24 @@ fn valid_hex_color(s: &str) -> bool {
             && s[1..].chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// 统一设置主题色：主字体 / 小字体 / 背景（空字符串表示恢复默认），并广播到所有窗口
+/// 统一设置主题色：字体 / 背景（空字符串表示恢复默认），并广播到所有窗口。
+/// 小字体颜色由前端按字体色自动派生，不再单独设置。
 #[tauri::command]
-async fn set_theme(
-    app: AppHandle,
-    text_main: String,
-    text_dim: String,
-    bg_color: String,
-) -> Result<(), String> {
-    for v in [&text_main, &text_dim, &bg_color] {
+async fn set_theme(app: AppHandle, font_color: String, bg_color: String) -> Result<(), String> {
+    for v in [&font_color, &bg_color] {
         if !valid_hex_color(v) {
             return Err(format!("非法颜色值：{v}"));
         }
     }
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    s.text_main = Some(text_main).filter(|v| !v.is_empty());
-    s.text_dim = Some(text_dim).filter(|v| !v.is_empty());
+    s.font_color = Some(font_color).filter(|v| !v.is_empty());
     s.bg_color = Some(bg_color).filter(|v| !v.is_empty());
     storage::save_settings(&dir, &s);
     let _ = app.emit(
         "theme",
         serde_json::json!({
-            "textMain": s.text_main,
-            "textDim": s.text_dim,
+            "fontColor": s.font_color,
             "bgColor": s.bg_color,
         }),
     );
