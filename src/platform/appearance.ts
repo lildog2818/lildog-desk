@@ -1,10 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import {
-  applyPanelAlpha,
-  applyTheme,
-  installResizePulse,
-  toast,
-} from "./shell";
+import { applyPanelAlpha, applyTheme, toast } from "./shell";
 import {
   getAutostart,
   getWindowState,
@@ -17,7 +12,6 @@ import {
 
 /** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
 export function initAppearance(): void {
-  installResizePulse();
   try {
     void getWindowState()
       .then((st) => {

@@ -59,22 +59,6 @@ body {
     0 14px 44px rgba(0, 0, 0, 0.45);
 }
 
-#app.size-pop {
-  animation: size-pop 0.26s ease;
-}
-
-@keyframes size-pop {
-  0% {
-    transform: scale(0.982);
-  }
-  55% {
-    transform: scale(1.005);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
 #app::before {
   content: "";
   position: absolute;

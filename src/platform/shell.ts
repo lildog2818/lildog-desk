@@ -52,28 +52,6 @@ export function applyTheme(t: {
   }
 }
 
-let pulseInstalled = false;
-
-/** 窗口尺寸变化停止后弹跳一下（阶梯吸附落位反馈），拖动过程中不触发以免抽搐 */
-export function installResizePulse(): void {
-  if (pulseInstalled) return;
-  pulseInstalled = true;
-  let settleTimer = 0;
-  let popTimer = 0;
-  window.addEventListener("resize", () => {
-    window.clearTimeout(settleTimer);
-    settleTimer = window.setTimeout(() => {
-      const app = document.getElementById("app");
-      if (!app) return;
-      app.classList.remove("size-pop");
-      void app.offsetWidth; // 重置动画
-      app.classList.add("size-pop");
-      window.clearTimeout(popTimer);
-      popTimer = window.setTimeout(() => app.classList.remove("size-pop"), 260);
-    }, 180);
-  });
-}
-
 export function toast(msg: string): void {
   let el = document.getElementById("toast");
   if (!el) {
