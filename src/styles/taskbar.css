@@ -1,90 +1,68 @@
-/* 展开态（flyout）时窗口整体向上扩高，#app 变为纵向：上方面板 + 底部长条 */
+/* ---- 任务栏组件（body.tb-body 由 widgets/taskbar 挂载时添加） ---- */
+/* 系统任务栏风格：图标按钮无文字、整体居中；右侧系统图标 + 时钟 */
+
 body.tb-body #app {
   flex-direction: row;
   align-items: stretch;
-  border-radius: 12px 12px 0 0;
-  border-bottom: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.05),
-    0 -10px 34px rgba(0, 0, 0, 0.38);
+  border-radius: 12px;
 }
 
 #tb-wrap {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   height: 100%;
-  min-height: 0;
+  min-width: 0;
+  padding: 0 10px;
 }
 
-/* 向上展开区：默认隐藏，展开时承载日历 / 选应用对话框 */
-#tb-flyout {
+/* 居中图标区：固定应用 + 运行中窗口 */
+#tb-center {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 0;
-  padding: 14px;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
 }
 
-#tb-flyout[hidden] {
+.tb-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tb-strip::-webkit-scrollbar {
   display: none;
 }
 
-.tb-flyout-box {
-  width: min(360px, 100%);
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 18px;
-  border-radius: 16px;
-  background:
-    linear-gradient(155deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.01) 55%),
-    linear-gradient(155deg, rgba(var(--bg-c1), calc(var(--panel-a, 0.55) * 1.25)), rgba(var(--bg-c2), calc(var(--panel-a, 0.55) * 1.3)) 55%, rgba(var(--bg-c3), calc(var(--panel-a, 0.55) * 1.25)));
-  border: 1px solid var(--stroke-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 18px 48px rgba(0, 0, 0, 0.5);
-}
-
-.tb-flyout-box.cal {
-  width: auto;
-}
-
-/* 选应用对话框在展开区内打开：限高避免溢出窗口 */
-body.tb-body .dialog {
-  width: min(340px, calc(100vw - 32px));
-}
-
-body.tb-body .picker-list {
-  max-height: 230px;
-}
-
-#tb-bar {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  min-width: 0;
-  padding: 4px 8px;
+.tb-sep {
+  width: 1px;
+  height: 26px;
   flex-shrink: 0;
+  background: var(--stroke);
 }
 
-/* 基础方按钮：开始 / 固定项 / 小组件 */
+/* 图标方按钮（固定项 / 运行窗口 / 系统图标通用） */
 .tb-btn {
   position: relative;
-  height: 40px;
-  min-width: 40px;
+  width: 46px;
+  height: 46px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 7px;
-  border-radius: 9px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text);
-  font-size: calc(var(--fs-ui) + 3px);
-  line-height: 1;
   cursor: pointer;
 }
 
@@ -93,146 +71,83 @@ body.tb-body .picker-list {
   border-color: var(--stroke);
 }
 
-#tb-start {
-  font-size: calc(var(--fs-title) + 6px);
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
-}
-
-.tb-strip {
+/* 图标统一 26px 居中 */
+.tb-btn img,
+.tb-btn .tb-ico {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
+  justify-content: center;
 }
 
-#tb-pins,
-#tb-widgets {
-  flex-shrink: 0;
-  max-width: 42vw;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-#tb-pins::-webkit-scrollbar,
-#tb-widgets::-webkit-scrollbar {
-  display: none;
-}
-
-/* 固定项：图标 + 运行态小亮条（仿系统任务栏指示） */
-.tb-pin img,
-.tb-pin .tb-fallback {
-  width: 25px;
-  height: 25px;
-  object-fit: contain;
-}
-
-.tb-pin .tb-fallback svg {
-  width: 20px;
-  height: 20px;
+.tb-btn .tb-ico svg {
+  width: 22px;
+  height: 22px;
   fill: var(--text-dim);
 }
 
+/* 固定项运行态：底部亮条 */
 .tb-pin.running::after {
   content: "";
   position: absolute;
-  bottom: 2.5px;
+  bottom: 3px;
   left: 50%;
   transform: translateX(-50%);
-  width: 15px;
+  width: 16px;
   height: 3px;
   border-radius: 2px;
   background: linear-gradient(150deg, #ffb84d, #ff8a3d);
   box-shadow: 0 0 7px rgba(255, 184, 77, 0.75);
 }
 
-/* 运行中窗口按钮：图标 + 单行标题；active 高亮、mined 弱化 */
-.tb-task {
-  max-width: 168px;
-  justify-content: flex-start;
-  color: var(--text-dim);
-}
-
-.tb-task .tb-task-icon {
-  width: 21px;
-  height: 21px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tb-task .tb-task-icon img {
-  width: 19px;
-  height: 19px;
-  object-fit: contain;
-}
-
-.tb-task .tb-task-icon svg {
-  width: 16px;
-  height: 16px;
-  fill: var(--text-dim);
-}
-
-.tb-task .tb-label {
-  font-size: var(--fs-small);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+/* 运行窗口：前台高亮、最小化弱化 */
 .tb-task.active {
-  background: rgba(255, 184, 77, 0.14);
-  border-color: rgba(255, 184, 77, 0.42);
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--stroke-strong);
 }
 
 .tb-task.mined {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
-.tb-sep {
-  width: 1px;
-  height: 26px;
-  flex-shrink: 0;
-  margin: 0 3px;
-  background: var(--stroke);
-}
-
-/* 运行窗口区：占据剩余宽度，超宽时横向滚动 */
-.tb-grow {
-  flex: 1 1 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.tb-grow::-webkit-scrollbar {
-  height: 4px;
-}
-
-.tb-grow::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-}
-
-/* 右侧时钟 */
+/* 右侧系统区 */
 #tb-right {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding-left: 4px;
+  gap: 2px;
+}
+
+.tb-btn.sys {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.tb-btn.sys svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.tb-btn.sys .wave {
+  fill: none;
+  stroke: currentColor;
+}
+
+.tb-btn.sys.muted {
+  color: var(--text-dim);
 }
 
 #tb-clock {
   text-align: right;
   line-height: 1.22;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 9px;
-  cursor: pointer;
-}
-
-#tb-clock:hover {
-  background: var(--hover);
+  cursor: default;
 }
 
 #tb-time {
@@ -244,39 +159,4 @@ body.tb-body .picker-list {
 #tb-date {
   font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
-}
-
-/* 日历（在展开区面板内渲染，不再使用固定定位弹层） */
-.tb-cal-head {
-  font-size: var(--fs-title);
-  font-weight: 600;
-  text-align: center;
-  margin-bottom: 10px;
-}
-
-.tb-cal-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 34px);
-  gap: 3px;
-  justify-content: center;
-}
-
-.tb-cal-grid span {
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-small);
-  border-radius: 8px;
-}
-
-.tb-cal-wd {
-  color: var(--text-dim);
-  opacity: 0.85;
-}
-
-.tb-cal-day.today {
-  background: linear-gradient(150deg, #ffb84d, #ff8a3d);
-  color: #2b1800;
-  font-weight: 700;
 }

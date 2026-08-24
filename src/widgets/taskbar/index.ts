@@ -1,11 +1,12 @@
 import "./../../styles/taskbar.css";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { allWidgets, registerWidget, type WidgetContext } from "../../platform/registry";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { registerWidget, type WidgetContext } from "../../platform/registry";
 import { toast } from "../../platform/shell";
-import { closeWidgetWindow, toggleWidgetWindow } from "../../platform/winstate";
+import { closeWidgetWindow } from "../../platform/winstate";
 import { widgetLoad, widgetSave } from "../../platform/widget-data";
-import { FALLBACK, showAppPicker } from "../launcher/actions";
+import { FALLBACK } from "../launcher/actions";
 
 // ---------------- 数据模型 ----------------
 
@@ -44,20 +45,18 @@ interface TaskListPayload {
 let data: BarData = { ...DEFAULT_DATA };
 let tasks: TaskWindowInfo[] = [];
 let foregroundHwnd = 0;
-let hideSystemBar = false;
+let audioMuted = false;
+let audioVolume = 0.5;
 
 interface TbEls {
   wrap: HTMLElement;
-  flyout: HTMLElement;
   pins: HTMLElement;
-  widgets: HTMLElement;
   tasks: HTMLElement;
-  clock: HTMLElement;
+  vol: HTMLButtonElement;
   time: HTMLElement;
   date: HTMLElement;
 }
 let els: TbEls | null = null;
-let flyoutOpen = false;
 let unlistenMenu: (() => void) | null = null;
 
 let saveTimer = 0;
@@ -84,161 +83,70 @@ function isPinRunning(pin: Pin): boolean {
   return tasks.some((t) => t.exe && normPath(t.exe) === exe);
 }
 
-function uid(): string {
-  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36);
+// ---------------- 音量（滚轮调节 / 点击静音） ----------------
+
+const VOL_ICON = {
+  on: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  off: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+};
+
+function renderVolIcon(): void {
+  if (!els) return;
+  els.vol.innerHTML = audioMuted ? VOL_ICON.off : VOL_ICON.on;
+  els.vol.classList.toggle("muted", audioMuted);
+  els.vol.title = audioMuted
+    ? `已静音（音量 ${Math.round(audioVolume * 100)}%）`
+    : `音量 ${Math.round(audioVolume * 100)}%，点击静音，滚轮调节`;
 }
 
-// ---------------- Flyout（向上展开区，承载日历/选应用） ----------------
-
-async function openFlyout(build: (box: HTMLElement) => void): Promise<void> {
-  if (!els || flyoutOpen) return;
-  flyoutOpen = true;
-  els.flyout.innerHTML = "";
-  const box = document.createElement("div");
-  box.className = "tb-flyout-box";
-  els.flyout.appendChild(box);
-  els.flyout.hidden = false;
+async function loadAudioState(): Promise<void> {
   try {
-    await invoke("set_taskbar_expanded", { expanded: true });
-  } catch (e) {
-    toast(String(e));
-  }
-  // 点击展开区空白处或 Esc 时收起；时钟自身除外（由其 click 处理开合，
-  // 否则 pointerdown 先收起、click 又展开，表现为"关不掉"）
-  const dismiss = (ev: Event): void => {
-    if (ev.type === "keydown" && (ev as KeyboardEvent).key !== "Escape") return;
-    const t = ev.target as HTMLElement;
-    if (
-      ev.type === "pointerdown" &&
-      (t.closest(".tb-flyout-box") || t.closest("#tb-clock"))
-    ) {
-      return;
-    }
-    void closeFlyout();
-  };
-  els.wrap.addEventListener("pointerdown", dismiss);
-  window.addEventListener("keydown", dismiss);
-  (els.wrap as TbWrap)._tbDismiss = dismiss;
-  build(box);
-}
-
-interface TbWrap extends HTMLElement {
-  _tbDismiss?: ((ev: Event) => void) | null;
-}
-
-async function closeFlyout(): Promise<void> {
-  if (!els || !flyoutOpen) return;
-  flyoutOpen = false;
-  const dismiss = (els.wrap as TbWrap)._tbDismiss;
-  if (dismiss) {
-    els.wrap.removeEventListener("pointerdown", dismiss);
-    window.removeEventListener("keydown", dismiss);
-    (els.wrap as TbWrap)._tbDismiss = null;
-  }
-  els.flyout.hidden = true;
-  els.flyout.innerHTML = "";
-  try {
-    await invoke("set_taskbar_expanded", { expanded: false });
+    const st = await invoke<{ volume: number; muted: boolean }>(
+      "get_audio_state",
+    );
+    audioVolume = st.volume;
+    audioMuted = st.muted;
+    renderVolIcon();
   } catch {
-    /* 收起失败不影响使用 */
+    /* 取不到就保持默认外观 */
   }
 }
 
-/** 选应用对话框在展开区内完成；浮层消失后自动收起 */
-function openPickerFlyout(): void {
-  void openFlyout(() => {
-    showAppPicker({
-      isAdded: (target) =>
-        data.pins.some((p) => p.target.toLowerCase() === target.toLowerCase()),
-      onPick: (a) => {
-        const pin: Pin = {
-          id: uid(),
-          name: a.name,
-          kind: a.kind,
-          target: a.target,
-          args: a.args,
-          icon: null,
-          exe: null,
-        };
-        data.pins.push(pin);
-        scheduleSave();
-        renderPins();
-        // 解析运行态 exe（lnk 内层目标），供「正在运行」点亮
-        void invoke<{ name: string; exe: string }>("resolve_pin_target", {
-          path: a.target,
-        })
-          .then((r) => {
-            if (r?.exe) {
-              pin.exe = r.exe;
-              scheduleSave();
-              refreshPinsRunning();
-            }
-          })
-          .catch(() => {});
-      },
-    });
-    // 观察全局浮层：用户关闭选框后收起展开区
-    const mo = new MutationObserver(() => {
-      if (!document.querySelector(".overlay")) {
-        mo.disconnect();
-        void closeFlyout();
-      }
-    });
-    mo.observe(document.body, { childList: true });
-  });
+let volSyncTimer = 0;
+function adjustVolume(delta: number): void {
+  audioVolume = Math.min(1, Math.max(0, audioVolume + delta));
+  renderVolIcon();
+  window.clearTimeout(volSyncTimer);
+  volSyncTimer = window.setTimeout(() => {
+    void invoke("set_audio_volume", { volume: audioVolume }).catch(() => {});
+  }, 60);
 }
 
-function openCalendarFlyout(): void {
-  void openFlyout((box) => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-
-    const head = document.createElement("div");
-    head.className = "tb-cal-head";
-    head.textContent = `${year}年${month + 1}月`;
-
-    const grid = document.createElement("div");
-    grid.className = "tb-cal-grid";
-    for (const w of ["日", "一", "二", "三", "四", "五", "六"]) {
-      const c = document.createElement("span");
-      c.className = "tb-cal-wd";
-      c.textContent = w;
-      grid.appendChild(c);
-    }
-    const firstDay = new Date(year, month, 1).getDay();
-    for (let i = 0; i < firstDay; i++) {
-      grid.appendChild(document.createElement("span"));
-    }
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    for (let d = 1; d <= daysInMonth; d++) {
-      const c = document.createElement("span");
-      c.className = "tb-cal-day";
-      if (d === now.getDate()) c.classList.add("today");
-      c.textContent = String(d);
-      grid.appendChild(c);
-    }
-
-    box.classList.add("cal");
-    box.append(head, grid);
-  });
+function toggleMute(): void {
+  audioMuted = !audioMuted;
+  renderVolIcon();
+  void invoke("set_audio_mute", { mute: audioMuted })
+    .then(() => void loadAudioState())
+    .catch((e) => {
+      audioMuted = !audioMuted;
+      renderVolIcon();
+      toast(String(e));
+    });
 }
 
-// ---------------- 原生右键菜单 ----------------
+// ---------------- 原生右键菜单（锚定在栏外，防止误点菜单项） ----------------
 
-/**
- * 右键菜单用系统原生弹出（muda），不受本窗口高度裁剪；
- * 菜单事件统一以 "tb-*" id 经后端转发回 "tb-menu"，前端集中分发。
- */
 function showNativeMenu(
   kind: "pin" | "task" | "bar",
-  opts: { id?: string; title?: string; hwnd?: number } = {},
+  opts: { id?: string; title?: string; hwnd?: number; cx?: number; cy?: number } = {},
 ): void {
   void invoke("show_tb_menu", {
     kind,
     id: opts.id ?? "",
     title: opts.title ?? "",
     hwnd: opts.hwnd ?? 0,
+    cx: opts.cx ?? 0,
+    cy: opts.cy ?? 0,
   }).catch((e) => toast(String(e)));
 }
 
@@ -270,14 +178,8 @@ function handleMenuId(raw: string): void {
     void invoke("close_task_window", { hwnd })
       .then(refreshSoon)
       .catch((e) => toast(String(e)));
-  } else if (raw === "tb-bar-addpin") {
-    openPickerFlyout();
-  } else if (raw === "tb-bar-togglesys") {
-    toggleHideSystem();
   } else if (raw === "tb-bar-close") {
-    void closeFlyout().finally(() => {
-      void closeWidgetWindow("taskbar").catch((e) => toast(String(e)));
-    });
+    void closeWidgetWindow("taskbar").catch((e) => toast(String(e)));
   }
 }
 
@@ -317,7 +219,7 @@ async function fetchPinIcon(pin: Pin): Promise<void> {
 }
 
 function ensureTaskIcon(btn: HTMLButtonElement, t: TaskWindowInfo): void {
-  const ic = btn.querySelector<HTMLElement>(".tb-task-icon");
+  const ic = btn.querySelector<HTMLElement>(".tb-ico");
   if (!ic || ic.querySelector("img")) return;
   const key = normPath(t.exe);
   if (!key) return; // 无路径（如提权进程）保持通用字形
@@ -363,7 +265,7 @@ function pinEl(pin: Pin): HTMLButtonElement {
     b.appendChild(img);
   } else {
     const fb = document.createElement("span");
-    fb.className = "tb-fallback";
+    fb.className = "tb-ico";
     fb.innerHTML = FALLBACK[pin.kind] ?? FALLBACK.file;
     b.appendChild(fb);
     void fetchPinIcon(pin);
@@ -377,7 +279,12 @@ function pinEl(pin: Pin): HTMLButtonElement {
   b.oncontextmenu = (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    showNativeMenu("pin", { id: pin.id, title: pin.name });
+    showNativeMenu("pin", {
+      id: pin.id,
+      title: pin.name,
+      cx: ev.clientX,
+      cy: ev.clientY,
+    });
   };
   return b;
 }
@@ -402,36 +309,14 @@ function refreshPinsRunning(): void {
   }
 }
 
-function renderWidgets(): void {
-  if (!els) return;
-  els.widgets.innerHTML = "";
-  for (const w of allWidgets()) {
-    if (w.id === "taskbar") continue;
-    const b = document.createElement("button");
-    b.className = "tb-btn";
-    b.textContent = w.icon;
-    b.title = `${w.name}`;
-    b.onclick = () => {
-      void toggleWidgetWindow(
-        w.id,
-        `lildog · ${w.name}`,
-        w.width,
-        w.height,
-      ).catch((e) => toast(String(e)));
-    };
-    els.widgets.appendChild(b);
-  }
-}
-
 function makeTaskButton(t: TaskWindowInfo): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "tb-btn tb-task";
+  b.title = t.title;
   const ic = document.createElement("span");
-  ic.className = "tb-task-icon";
+  ic.className = "tb-ico";
   ic.innerHTML = FALLBACK.app;
-  const lb = document.createElement("span");
-  lb.className = "tb-label";
-  b.append(ic, lb);
+  b.append(ic);
 
   const hwnd = t.hwnd;
   b.onclick = () => {
@@ -442,7 +327,12 @@ function makeTaskButton(t: TaskWindowInfo): HTMLButtonElement {
   b.oncontextmenu = (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    showNativeMenu("task", { hwnd, title: t.title });
+    showNativeMenu("task", {
+      hwnd,
+      title: t.title,
+      cx: ev.clientX,
+      cy: ev.clientY,
+    });
   };
   return b;
 }
@@ -459,11 +349,7 @@ function renderTasks(): void {
       taskButtons.set(t.hwnd, b);
       els.tasks.appendChild(b);
     }
-    const lb = b.querySelector<HTMLElement>(".tb-label")!;
-    if (lb.textContent !== t.title) {
-      lb.textContent = t.title;
-      b.title = t.title;
-    }
+    if (b.title !== t.title) b.title = t.title;
     ensureTaskIcon(b, t);
     b.classList.toggle("active", foregroundHwnd === t.hwnd && !t.minimized);
     b.classList.toggle("mined", t.minimized);
@@ -494,23 +380,6 @@ function refreshSoon(): void {
   window.setTimeout(() => void refreshTasks(), 120);
 }
 
-async function loadHideSystem(): Promise<void> {
-  try {
-    hideSystemBar = await invoke<boolean>("get_hide_system_bar");
-  } catch {
-    hideSystemBar = false;
-  }
-}
-
-function toggleHideSystem(): void {
-  const next = !hideSystemBar;
-  hideSystemBar = next;
-  void invoke("set_hide_system_bar", { on: next }).catch((e) => {
-    hideSystemBar = !next;
-    toast(String(e));
-  });
-}
-
 // ---------------- 挂载 ----------------
 
 async function mountTaskbar(root: HTMLElement): Promise<() => void> {
@@ -521,19 +390,16 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
 
   root.innerHTML = `
     <div id="tb-wrap">
-      <div id="tb-flyout" hidden></div>
-      <div id="tb-bar">
-        <button id="tb-start" title="控制台">🐶</button>
+      <div id="tb-center">
         <div id="tb-pins" class="tb-strip"></div>
         <div class="tb-sep"></div>
-        <div id="tb-widgets" class="tb-strip"></div>
-        <div class="tb-sep"></div>
-        <div id="tb-tasks" class="tb-strip tb-grow"></div>
-        <div id="tb-right">
-          <div id="tb-clock" title="日历">
-            <div id="tb-time">--:--</div>
-            <div id="tb-date"></div>
-          </div>
+        <div id="tb-tasks" class="tb-strip"></div>
+      </div>
+      <div id="tb-right">
+        <button id="tb-vol" class="tb-btn sys" title="音量"></button>
+        <div id="tb-clock">
+          <div id="tb-time">--:--</div>
+          <div id="tb-date"></div>
         </div>
       </div>
     </div>
@@ -541,30 +407,33 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
 
   els = {
     wrap: root.querySelector<HTMLElement>("#tb-wrap")!,
-    flyout: root.querySelector<HTMLElement>("#tb-flyout")!,
     pins: root.querySelector<HTMLElement>("#tb-pins")!,
-    widgets: root.querySelector<HTMLElement>("#tb-widgets")!,
     tasks: root.querySelector<HTMLElement>("#tb-tasks")!,
-    clock: root.querySelector<HTMLElement>("#tb-clock")!,
+    vol: root.querySelector<HTMLButtonElement>("#tb-vol")!,
     time: root.querySelector<HTMLElement>("#tb-time")!,
     date: root.querySelector<HTMLElement>("#tb-date")!,
   };
 
-  const startBtn = root.querySelector<HTMLButtonElement>("#tb-start")!;
-  startBtn.onclick = () => {
-    void invoke("toggle_main").catch((e) => toast(String(e)));
-  };
+  // 空白处按住拖动窗口（按钮/时钟除外）
+  els.wrap.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    const t = ev.target as HTMLElement;
+    if (t.closest("button,input")) return;
+    void getCurrentWindow().startDragging();
+  });
 
-  els.clock.onclick = () => {
-    if (flyoutOpen) void closeFlyout();
-    else openCalendarFlyout();
-  };
-
-  // 任务栏空白处右键 → 原生设置菜单（避开 pin/task 自身的右键）
-  els.tasks.addEventListener("contextmenu", (ev) => {
-    if ((ev.target as HTMLElement).closest(".tb-task")) return;
+  // 右键空白处 → 栏菜单（锚定在栏外）
+  els.wrap.addEventListener("contextmenu", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (t.closest(".tb-pin,.tb-task")) return;
     ev.preventDefault();
-    showNativeMenu("bar");
+    showNativeMenu("bar", { cx: ev.clientX, cy: ev.clientY });
+  });
+
+  els.vol.addEventListener("click", toggleMute);
+  els.vol.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    adjustVolume(ev.deltaY < 0 ? 0.05 : -0.05);
   });
 
   // 原生菜单事件回环：后端把被点中的菜单项 id 原样转发回来
@@ -573,9 +442,9 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     .catch(() => null);
 
   renderPins();
-  renderWidgets();
+  renderVolIcon();
   tickClock();
-  await loadHideSystem();
+  void loadAudioState();
   await refreshTasks();
 
   clockTimer = window.setInterval(tickClock, 1000);
@@ -585,7 +454,6 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     window.clearInterval(clockTimer);
     window.clearInterval(pollTimer);
     unlistenMenu?.();
-    void closeFlyout();
     document.body.classList.remove("tb-body");
     taskButtons.clear();
     els = null;
@@ -597,10 +465,10 @@ registerWidget({
   name: "任务栏",
   icon: "🧭",
   color: "#7dd3fc",
-  desc: "屏幕底部停靠任务栏，替代系统任务栏",
-  width: 900,
-  height: 56,
+  desc: "系统任务栏风格：图标居中、音量与网络、运行中窗口",
+  width: 880,
+  height: 72,
   minWidth: 320,
-  minHeight: 56,
+  minHeight: 72,
   mount: (root: HTMLElement, _ctx: WidgetContext) => mountTaskbar(root),
 });

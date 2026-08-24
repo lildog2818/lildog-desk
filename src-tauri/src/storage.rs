@@ -103,9 +103,6 @@ pub struct AppSettings {
     /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
     #[serde(default)]
     pub clip_dir: Option<String>,
-    /// 任务栏组件：是否隐藏系统任务栏（Shell_TrayWnd）。None 视为 false
-    #[serde(default)]
-    pub taskbar_hide_system: Option<bool>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
@@ -135,11 +132,6 @@ impl AppSettings {
 
     pub fn size_step(&self) -> u32 {
         self.size_step.unwrap_or(48).clamp(8, 200)
-    }
-
-    /// 任务栏组件是否应隐藏系统任务栏（缺省 false）
-    pub fn taskbar_hide_system(&self) -> bool {
-        self.taskbar_hide_system.unwrap_or(false)
     }
 
     /// 可读性增强级别：优先新字段，缺省按旧布尔开关推断（开=std 关=off）
