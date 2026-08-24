@@ -710,8 +710,9 @@ fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
     ((v / s).round() * s).max(min)
 }
 
-/// 吸附对齐：拖动时窗口边缘贴近**其他小组件窗口**则给出预览对齐位。
-/// 不与桌面/屏幕边缘吸附；窗口之间允许重叠，除首尾拼接外还支持同边对齐（左/右/上/下）。
+/// 吸附对齐：拖动时在「其他小组件窗口的边缘」与「桌面/屏幕边缘」之间
+/// 选择距离最近者给出预览对齐位。
+/// 窗口之间允许重叠，除首尾拼接外还支持同边对齐（左/右/上/下）。
 /// 返回 (吸附后位置, 是否处于感应区内)。感应区内即使无需位移也返回 true，
 /// 用于区分「已落在目标上」和「周边没有目标」。
 fn snap_position(
@@ -732,13 +733,17 @@ fn snap_position(
     if w <= 0 || h <= 0 {
         return ((x, y), false);
     }
-    let mut l = x;
-    let mut r = x + w;
-    let mut t = y;
-    let mut b = y + h;
-    let mut engaged = false;
+    let l = x;
+    let r = x + w;
+    let t = y;
+    let b = y + h;
 
-    // 仅与其他小组件窗口对齐（不吸附桌面/屏幕边缘）
+    // 每轴维护一个最佳候选 (distance, new_coord)：
+    // 组件窗边缘与屏幕边缘共同竞争，最终只应用距离最近者
+    let mut best_h: Option<(i32, i32)> = None; // 水平：候选新左缘
+    let mut best_v: Option<(i32, i32)> = None; // 垂直：候选新上缘
+
+    // ---- 来源一：其他小组件窗口 ----
     for (label, other) in app.webview_windows() {
         if label == win.label()
             || label == "snap-preview"
@@ -760,45 +765,77 @@ fn snap_position(
         // 「接近」而非严格重叠：垂直/水平范围相差不超过阈值即可参与对齐
         let v_near = t < ob + th && b > ot - th;
         if v_near {
-            // 水平方向所有对齐方式独立评估，取距离最近者（支持多侧）
-            let cands = [
-                (or_, (l - or_).abs()),         // 我左缘 ↔ 对方右缘拼接
-                (ol - w, (r - ol).abs()),       // 我右缘 ↔ 对方左缘拼接
-                (ol, (l - ol).abs()),           // 左缘与对方左缘对齐
-                (or_ - w, (r - or_).abs()),     // 右缘与对方右缘对齐
-            ];
-            if let Some(&(_, nl)) = cands
-                .iter()
-                .filter(|(_, d)| *d <= th)
-                .min_by_key(|(_, d)| *d)
-            {
-                engaged = true;
-                l = nl;
-                r = l + w;
+            for (cand, d) in [
+                (or_, (l - or_).abs()),     // 我左缘 ↔ 对方右缘拼接
+                (ol - w, (r - ol).abs()),   // 我右缘 ↔ 对方左缘拼接
+                (ol, (l - ol).abs()),       // 左缘对齐
+                (or_ - w, (r - or_).abs()), // 右缘对齐
+            ] {
+                if d <= th && best_h.map_or(true, |(bd, _)| d < bd) {
+                    best_h = Some((d, cand));
+                }
             }
         }
         let h_near = l < or_ + th && r > ol - th;
         if h_near {
-            // 垂直方向同样独立评估，取最近者
-            let cands = [
-                (ob, (t - ob).abs()),           // 我上缘 ↔ 对方下缘拼接
-                (ot - h, (b - ot).abs()),       // 我下缘 ↔ 对方上缘拼接
-                (ot, (t - ot).abs()),           // 上缘对齐
-                (ob - h, (b - ob).abs()),       // 下缘对齐
-            ];
-            if let Some((_, nt)) = cands
-                .iter()
-                .filter(|(_, d)| *d <= th)
-                .min_by_key(|(_, d)| *d)
-            {
-                engaged = true;
-                t = *nt;
-                b = t + h;
+            for (cand, d) in [
+                (ob, (t - ob).abs()),     // 我上缘 ↔ 对方下缘拼接
+                (ot - h, (b - ot).abs()), // 我下缘 ↔ 对方上缘拼接
+                (ot, (t - ot).abs()),     // 上缘对齐
+                (ob - h, (b - ob).abs()), // 下缘对齐
+            ] {
+                if d <= th && best_v.map_or(true, |(bd, _)| d < bd) {
+                    best_v = Some((d, cand));
+                }
             }
         }
     }
 
-    ((l, t), engaged)
+    // ---- 来源二：桌面/屏幕边缘 ----
+    if let Ok(monitors) = win.available_monitors() {
+        for m in monitors {
+            let mp = m.position();
+            let ms = m.size();
+            let ml = mp.x;
+            let mr = mp.x + ms.width as i32;
+            let mt = mp.y;
+            let mb = mp.y + ms.height as i32;
+
+            let v_near = t < mb + th && b > mt - th;
+            if v_near {
+                for (cand, d) in [(ml, (l - ml).abs()), (mr - w, (r - mr).abs())] {
+                    if d <= th && best_h.map_or(true, |(bd, _)| d < bd) {
+                        best_h = Some((d, cand));
+                    }
+                }
+            }
+            let h_near = l < mr + th && r > ml - th;
+            if h_near {
+                for (cand, d) in [(mt, (t - mt).abs()), (mb - h, (b - mb).abs())] {
+                    if d <= th && best_v.map_or(true, |(bd, _)| d < bd) {
+                        best_v = Some((d, cand));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut engaged = false;
+    let nl = match best_h {
+        Some((_, c)) => {
+            engaged = true;
+            c
+        }
+        None => l,
+    };
+    let nt = match best_v {
+        Some((_, c)) => {
+            engaged = true;
+            c
+        }
+        None => t,
+    };
+    ((nl, nt), engaged)
 }
 
 fn clamp_fully_in_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
