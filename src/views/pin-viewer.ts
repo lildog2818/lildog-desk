@@ -26,9 +26,10 @@ export function mountPinViewer(root: HTMLElement): void {
   let curW = 200;
   let curH = 150;
   let lastPath = "";
+  let loaded = false;
 
   const close = (): void => {
-    void win.close();
+    win.close().catch(() => {});
   };
   root.querySelector("#pin-close")!.addEventListener("pointerdown", (ev) => {
     ev.stopPropagation();
@@ -67,35 +68,49 @@ export function mountPinViewer(root: HTMLElement): void {
 
   wrap.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
-    buildMenu(ev.clientX, ev.clientY, [
+    const entries: Array<{ label?: string; action?: () => void }> = [
       {
         label: "复制图片",
         action: () => {
-          void invoke("write_clipboard_image", { path: lastPath })
-            .then(() => {})
-            .catch((e) => console.error(e));
+          void invoke("write_clipboard_image", { path: lastPath }).catch((e) =>
+            console.error(e),
+          );
         },
       },
+      { label: undefined, action: undefined },
       { label: "关闭贴图", action: () => close() },
-    ]);
+    ];
+    buildMenu(ev.clientX, ev.clientY, entries);
   });
 
-  // 接收后端推送的图片
+  const apply = async (p: PinPayload): Promise<void> => {
+    if (loaded) return;
+    loaded = true;
+    lastPath = p.path;
+    try {
+      img.src = await invoke<string>("clip_image_data_url", {
+        path: p.path,
+        maxEdge: 0,
+      });
+      const sz = await win.outerSize();
+      curW = Math.max(48, sz.width);
+      curH = Math.max(32, sz.height);
+    } catch (e) {
+      console.error("加载贴图失败", e);
+    }
+  };
+
+  // 加速路径：后端在窗口就绪前 emit 的载荷
   void getCurrentWebview()
-    .listen<PinPayload>("pin-image", async (ev) => {
-      const p = ev.payload;
-      lastPath = p.path;
-      try {
-        img.src = await invoke<string>("clip_image_data_url", {
-          path: p.path,
-          maxEdge: 0,
-        });
-        const sz = await win.outerSize();
-        curW = sz.width;
-        curH = sz.height;
-      } catch (e) {
-        console.error("加载贴图失败", e);
-      }
+    .listen<PinPayload>("pin-image", (ev) => {
+      if (ev.payload && ev.payload.path) void apply(ev.payload);
+    })
+    .catch(() => {});
+
+  // 兜底路径（消除竞态）：前端就绪后主动拉取属于自己的载荷
+  void invoke<PinPayload | null>("take_pin_payload")
+    .then((p) => {
+      if (p && p.path) void apply(p);
     })
     .catch(() => {});
 }

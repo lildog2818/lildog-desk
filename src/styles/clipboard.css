@@ -133,6 +133,25 @@
   object-fit: cover;
 }
 
+/* 图片条目的缩略图：保持原始宽高比，不裁切 */
+.cb-row-icon.is-img {
+  width: auto;
+  min-width: 40px;
+  max-width: 76px;
+  height: 42px;
+  background: transparent;
+  border: none;
+  align-items: center;
+}
+
+.cb-row-icon.is-img img {
+  width: auto;
+  max-width: 76px;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 5px;
+}
+
 .cb-main {
   flex: 1;
   min-width: 0;
@@ -166,4 +185,66 @@
 
 .cb-pin-flag {
   font-size: 10px;
+}
+
+/* ---- 图片页签：自适应缩略图网格（参考 WPF 版） ---- */
+
+.cb-list.cb-gridmode {
+  padding-top: 4px;
+}
+
+.cb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+  align-items: end;
+}
+
+.cb-cell {
+  position: relative;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 4px;
+  min-width: 0;
+}
+
+.cb-cell:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--stroke);
+}
+
+.cb-cell-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.cb-cell-img img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 170px;
+  object-fit: contain;
+  border-radius: 6px;
+  -webkit-user-drag: none;
+}
+
+.cb-cell-badge {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 10px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+.cb-cell-cap {
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

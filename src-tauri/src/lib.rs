@@ -80,6 +80,9 @@ struct AppState {
     tray_items: Mutex<Vec<TrayEntry>>,
     /// 贴图窗自增序号（生成唯一 label）
     pin_seq: AtomicU64,
+    /// 贴图窗待取载荷：label -> (path, w, h)。前端就绪后主动拉取，
+    /// 避免"先 emit 后监听"的竞态导致窗口永远空白。
+    pending_pins: Mutex<HashMap<String, (String, i32, i32)>>,
     /// 热键呼出面板时记录的前台窗口，粘贴时还原焦点
     last_foreground: Mutex<isize>,
     /// 进行中的截图用途：0=无 1=复制到剪贴板 2=自动贴图
@@ -320,10 +323,12 @@ fn apply_glass(_win: &WebviewWindow, _v: f64) {}
 async fn set_glass(app: AppHandle, v: f64) -> Result<(), String> {
     let v = v.clamp(0.0, 1.0);
     *app.state::<AppState>().glass_value.lock().unwrap() = v;
-    // 全局统一：应用到当前所有窗口
+    // 全局统一：应用到当前所有窗口（贴图窗/截图层除外）
     for (_, win) in app.webview_windows() {
         #[cfg(target_os = "windows")]
-        apply_glass(&win, v);
+        if !is_chromeless_label(win.label()) {
+            apply_glass(&win, v);
+        }
     }
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
@@ -340,6 +345,11 @@ fn valid_widget_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// 无面板外观的辅助窗口：不参与吸附、阶梯与亚克力玻璃效果
+fn is_chromeless_label(label: &str) -> bool {
+    label == "snap-preview" || label.starts_with("pin-") || label == "shot-overlay"
 }
 
 fn ensure_widget_window(
@@ -475,7 +485,8 @@ async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), St
 const PIN_MAX_W: i32 = 1400;
 const PIN_MAX_H: i32 = 900;
 
-/// 打开贴图窗：等比缩放至屏幕友好尺寸，创建后推送图片数据
+/// 打开贴图窗：等比缩放至屏幕友好尺寸；图片数据由前端就绪后
+/// 通过 take_pin_payload 拉取（emit 仅作尽力而为的加速路径）
 pub(crate) async fn open_pin_window(
     app: &AppHandle,
     path: String,
@@ -512,15 +523,42 @@ pub(crate) async fn open_pin_window(
     };
     #[cfg(target_os = "windows")]
     round_window_corners(&win);
+    // 贴图窗不参与玻璃效果：清掉可能残留的亚克力
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::{apply_acrylic, clear_acrylic};
+        let _ = clear_acrylic(&win);
+        let _ = apply_acrylic(&win, Some((18, 18, 24, 255)));
+    }
     let _ = win.set_size(tauri::PhysicalSize::new(pw.max(1) as u32, ph.max(1) as u32));
     let _ = win.show();
     let _ = win.set_focus();
+
+    // 存待取载荷；emit 只是加速路径，前端拉取兜底
+    app.state::<AppState>()
+        .pending_pins
+        .lock()
+        .unwrap()
+        .insert(label.clone(), (path, w, h));
     let _ = app.emit_to(
         &label,
         "pin-image",
-        serde_json::json!({ "path": path, "width": w, "height": h }),
+        serde_json::json!({}),
     );
     Ok(())
+}
+
+/// 贴图窗前端就绪后拉取自己的图片数据并清除待取项
+#[tauri::command]
+async fn take_pin_payload(
+    app: AppHandle,
+    win: WebviewWindow,
+) -> Result<Option<serde_json::Value>, String> {
+    let label = win.label().to_string();
+    let payload = app.state::<AppState>().pending_pins.lock().unwrap().remove(&label);
+    Ok(payload.map(|(path, width, height)| {
+        serde_json::json!({ "path": path, "width": width, "height": height })
+    }))
 }
 
 #[tauri::command]
@@ -1152,7 +1190,7 @@ fn snap_position(
     // ---- 来源一：其他小组件窗口 ----
     for (label, other) in app.webview_windows() {
         if label == win.label()
-            || label == "snap-preview"
+            || is_chromeless_label(&label)
             || !other.is_visible().unwrap_or(false)
         {
             continue;
@@ -1712,6 +1750,10 @@ fn toggle_main_visible(app: &AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn reapply_glass_async(app: &AppHandle, label: &str) {
+    // 贴图窗/截图层不参与玻璃效果
+    if is_chromeless_label(label) {
+        return;
+    }
     let glass = *app.state::<AppState>().glass_value.lock().unwrap();
     let Some(win) = app.get_webview_window(label) else {
         return;
@@ -1788,6 +1830,7 @@ pub fn run() {
             clipboard::clip_image_data_url,
             clipboard::set_clip_dir,
             open_image_pin,
+            take_pin_payload,
             start_shot,
             commit_shot_rect,
             cancel_shot,
@@ -1800,8 +1843,8 @@ pub fn run() {
             WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
-                // 预览层自身的事件不参与任何逻辑，避免自反馈卡死
-                if label == "snap-preview" {
+                // 预览层与贴图窗不参与任何吸附逻辑，避免自反馈或干扰
+                if is_chromeless_label(&label) {
                     return;
                 }
                 if let Some(win) = app.get_webview_window(&label) {
@@ -1860,8 +1903,8 @@ pub fn run() {
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
-                // 预览层自身的事件不参与任何逻辑，避免自反馈卡死
-                if label == "snap-preview" {
+                // 预览层与贴图窗不参与阶梯吸附等逻辑
+                if is_chromeless_label(&label) {
                     return;
                 }
                 let win = app.get_webview_window(&label);

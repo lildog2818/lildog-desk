@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { registerWidget } from "../../platform/registry";
-import { buildMenu, closeMenus, confirmDanger, toast } from "../../platform/shell";
+import {
+  buildMenu,
+  closeMenus,
+  confirmDanger,
+  toast,
+  type MenuEntry,
+} from "../../platform/shell";
 import { widgetLoad, widgetSave } from "../../platform/widget-data";
 import { buildWidgetShell } from "../quota-shared";
 import "./../../styles/clipboard.css";
@@ -228,15 +234,17 @@ function setThumbImg(box: HTMLElement, url: string): void {
   box.appendChild(img);
 }
 
-function loadThumb(path: string, box: HTMLElement): void {
-  const cached = thumbCache.get(path);
+/** 按最长边缩放加载 data-url 缩略图；缓存键含边长 */
+function loadThumb(path: string, maxEdge: number, box: HTMLElement): void {
+  const key = `${path}@${maxEdge}`;
+  const cached = thumbCache.get(key);
   if (cached) {
     setThumbImg(box, cached);
     return;
   }
-  void invoke<string>("clip_image_data_url", { path, maxEdge: 96 })
+  void invoke<string>("clip_image_data_url", { path, maxEdge })
     .then((url) => {
-      thumbCache.set(path, url);
+      thumbCache.set(key, url);
       if (box.isConnected) setThumbImg(box, url);
     })
     .catch(() => {});
@@ -250,22 +258,18 @@ function rowEl(item: ClipItem): HTMLDivElement {
 
   const icon = document.createElement("div");
   icon.className = "cb-row-icon";
-  let thumbSrc: string | null = null;
   if (item.kind === "image") {
+    // 缩略图：保持原始宽高比，不裁切
+    icon.classList.add("is-img");
     if (item.imagePath) {
-      // 有缓存直接显示；否则走异步 data-url（避免 asset 协议目录限制）
-      const cached = thumbCache.get(item.imagePath);
-      if (cached) thumbSrc = cached;
+      const cached = thumbCache.get(`${item.imagePath}@96`);
+      if (cached) {
+        setThumbImg(icon, cached);
+      } else {
+        loadThumb(item.imagePath, 96, icon);
+      }
     }
-    if (thumbSrc) {
-      const img = document.createElement("img");
-      img.src = thumbSrc;
-      img.draggable = false;
-      icon.appendChild(img);
-    } else {
-      icon.textContent = "🖼️";
-      if (item.imagePath) loadThumb(item.imagePath, icon);
-    }  } else {
+  } else {
     icon.textContent = item.kind === "files" ? "📁" : "📄";
   }
 
@@ -299,26 +303,68 @@ function rowEl(item: ClipItem): HTMLDivElement {
     ev.preventDefault();
     selectedId = item.id;
     render();
-    const entries = [
-      { label: "复制", action: () => copyItem(item) },
-      ...(item.kind === "image"
-        ? [{ label: "贴图", action: () => pinImage(item) }]
-        : []),
-      { label: "粘贴到原窗口", action: () => pasteItem(item) },
-      {
-        label: item.pinned ? "取消置顶" : "置顶",
-        action: () => {
-          item.pinned = !item.pinned;
-          persist();
-          render();
-        },
-      },
-      { label: undefined, action: undefined },
-      { label: "删除", danger: true, action: () => deleteItem(item) },
-    ];
-    buildMenu(ev.clientX, ev.clientY, entries);
+    buildMenu(ev.clientX, ev.clientY, itemMenuEntries(item));
   };
   return row;
+}
+
+/** 行 / 网格共用的右键菜单 */
+function itemMenuEntries(item: ClipItem): MenuEntry[] {
+  return [
+    { label: "复制", action: () => copyItem(item) },
+    ...(item.kind === "image"
+      ? [{ label: "贴图", action: () => pinImage(item) }]
+      : []),
+    { label: "粘贴到原窗口", action: () => pasteItem(item) },
+    {
+      label: item.pinned ? "取消置顶" : "置顶",
+      action: () => {
+        item.pinned = !item.pinned;
+        persist();
+        render();
+      },
+    },
+    { label: undefined, action: undefined },
+    { label: "删除", danger: true, action: () => deleteItem(item) },
+  ];
+}
+
+/** 图片页签的缩略图网格单元：完整显示原始宽高比（参考 WPF 版样式） */
+function cellEl(item: ClipItem): HTMLDivElement {
+  const cell = document.createElement("div");
+  cell.className = "cb-cell";
+
+  const box = document.createElement("div");
+  box.className = "cb-cell-img";
+  if (item.imagePath) {
+    const key = `${item.imagePath}@320`;
+    const cached = thumbCache.get(key);
+    if (cached) setThumbImg(box, cached);
+    else loadThumb(item.imagePath, 320, box);
+  }
+  cell.appendChild(box);
+
+  if (item.pinned) {
+    const badge = document.createElement("span");
+    badge.className = "cb-cell-badge";
+    badge.textContent = "📌";
+    cell.appendChild(badge);
+  }
+
+  const cap = document.createElement("div");
+  cap.className = "cb-cell-cap";
+  cap.textContent = `${item.width ?? "?"}×${item.height ?? "?"} · ${fmtTime(item.ts)}`;
+  cell.appendChild(cap);
+
+  cell.title = `单击复制 · 双击粘贴 · ${fmtTime(item.ts)}`;
+  cell.onclick = () => copyItem(item);
+  cell.ondblclick = () => pasteItem(item);
+  cell.oncontextmenu = (ev) => {
+    ev.preventDefault();
+    selectedId = item.id;
+    buildMenu(ev.clientX, ev.clientY, itemMenuEntries(item));
+  };
+  return cell;
 }
 
 function visibleItems(): ClipItem[] {
@@ -353,7 +399,18 @@ function render(): void {
   if (!list) return;
   list.innerHTML = "";
   const shown = visibleItems();
-  for (const item of shown) list.appendChild(rowEl(item));
+
+  // 图片页签：自适应缩略图网格（保持原始宽高比）
+  if (tab === "image" && shown.length > 0) {
+    list.classList.add("cb-gridmode");
+    const grid = document.createElement("div");
+    grid.className = "cb-grid";
+    for (const item of shown) grid.appendChild(cellEl(item));
+    list.appendChild(grid);
+  } else {
+    list.classList.remove("cb-gridmode");
+    for (const item of shown) list.appendChild(rowEl(item));
+  }
 
   if (shown.length === 0) {
     const hint = document.createElement("div");
