@@ -10,7 +10,7 @@ import { FALLBACK } from "../launcher/actions";
 
 // ---------------- 数据模型 ----------------
 
-interface Pin {
+export interface Pin {
   id: string;
   name: string;
   kind: string;
@@ -22,9 +22,14 @@ interface Pin {
   exe?: string | null;
 }
 
-interface BarData {
+export interface BarData {
   pins: Pin[];
 }
+
+export const VOL_ICON = {
+  on: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  off: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+};
 
 const DEFAULT_DATA: BarData = { pins: [] };
 
@@ -58,7 +63,7 @@ interface TbEls {
   date: HTMLElement;
 }
 let els: TbEls | null = null;
-let unlistenMenu: (() => void) | null = null;
+let unlistenFns: Array<() => void> = [];
 
 let saveTimer = 0;
 let clockTimer = 0;
@@ -84,12 +89,7 @@ function isPinRunning(pin: Pin): boolean {
   return tasks.some((t) => t.exe && normPath(t.exe) === exe);
 }
 
-// ---------------- 音量（滚轮调节 / 点击静音） ----------------
-
-const VOL_ICON = {
-  on: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
-  off: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
-};
+// ---------------- 音量（滚轮调节 / 面板滑条） ----------------
 
 function renderVolIcon(): void {
   if (!els) return;
@@ -121,18 +121,6 @@ function adjustVolume(delta: number): void {
   volSyncTimer = window.setTimeout(() => {
     void invoke("set_audio_volume", { volume: audioVolume }).catch(() => {});
   }, 60);
-}
-
-function toggleMute(): void {
-  audioMuted = !audioMuted;
-  renderVolIcon();
-  void invoke("set_audio_mute", { mute: audioMuted })
-    .then(() => void loadAudioState())
-    .catch((e) => {
-      audioMuted = !audioMuted;
-      renderVolIcon();
-      toast(String(e));
-    });
 }
 
 // ---------------- 原生右键菜单（锚定在栏外，防止误点菜单项） ----------------
@@ -179,6 +167,10 @@ function handleMenuId(raw: string): void {
     void invoke("close_task_window", { hwnd })
       .then(refreshSoon)
       .catch((e) => toast(String(e)));
+  } else if (raw === "tb-bar-addpin") {
+    void invoke("open_taskbar_panel", { mode: "picker" }).catch((e) =>
+      toast(String(e)),
+    );
   } else if (raw === "tb-bar-close") {
     void closeWidgetWindow("taskbar").catch((e) => toast(String(e)));
   }
@@ -459,23 +451,40 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     showNativeMenu("bar", { cx: ev.clientX, cy: ev.clientY });
   });
 
-  els.vol.addEventListener("click", toggleMute);
+  // 网络图标：点击弹出快捷设置面板；状态随轮询低频刷新
+  els.net.addEventListener("click", () => {
+    void invoke("open_taskbar_panel", { mode: "settings" }).catch((e) =>
+      toast(String(e)),
+    );
+  });
+
+  // 音量图标：点击弹出快捷设置面板（滑条调节），滚轮快速增减
+  els.vol.addEventListener("click", () => {
+    void invoke("open_taskbar_panel", { mode: "settings" }).catch((e) =>
+      toast(String(e)),
+    );
+  });
   els.vol.addEventListener("wheel", (ev) => {
     ev.preventDefault();
     adjustVolume(ev.deltaY < 0 ? 0.05 : -0.05);
   });
 
-  // 网络图标：点击打开系统网络设置；状态随轮询低频刷新
-  els.net.addEventListener("click", () => {
-    void invoke("open_target", { target: "ms-settings:network" }).catch((e) =>
-      toast(String(e)),
-    );
-  });
-
-  // 原生菜单事件回环：后端把被点中的菜单项 id 原样转发回来
-  unlistenMenu = await getCurrentWebview()
-    .listen<string>("tb-menu", (ev) => handleMenuId(ev.payload))
-    .catch(() => null);
+  // 原生菜单事件回环：后端把被点中的菜单项 id 原样转发回来；
+  // 面板（picker 模式）修改固定项后同步刷新
+  unlistenFns.push(
+    await getCurrentWebview()
+      .listen<string>("tb-menu", (ev) => handleMenuId(ev.payload))
+      .catch(() => () => {}),
+  );
+  unlistenFns.push(
+    await getCurrentWebview().listen("tb-pins-changed", () => {
+      void widgetLoad<BarData>("taskbar", { ...DEFAULT_DATA }).then((d) => {
+        if (!Array.isArray(d.pins)) d.pins = [];
+        data = d;
+        renderPins();
+      });
+    }),
+  );
 
   renderPins();
   renderVolIcon();
@@ -496,7 +505,8 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
   return () => {
     window.clearInterval(clockTimer);
     window.clearInterval(pollTimer);
-    unlistenMenu?.();
+    for (const fn of unlistenFns) fn();
+    unlistenFns = [];
     document.body.classList.remove("tb-body");
     taskButtons.clear();
     els = null;

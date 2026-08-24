@@ -1,6 +1,7 @@
 mod clipboard;
 mod icons;
 mod links;
+mod panel;
 mod storage;
 mod system;
 mod taskbar;
@@ -384,9 +385,13 @@ fn valid_widget_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// 无面板外观的辅助窗口：不参与吸附、阶梯与亚克力玻璃效果
+/// 无面板外观的辅助窗口：不参与吸附、阶梯与亚克力玻璃效果。
+/// 快捷设置面板为程序化定位的置顶弹层，同样排除。
 fn is_chromeless_label(label: &str) -> bool {
-    label == "snap-preview" || label.starts_with("pin-") || label == "shot-overlay"
+    label == "snap-preview"
+        || label.starts_with("pin-")
+        || label == "shot-overlay"
+        || label == panel::PANEL_LABEL
 }
 
 fn ensure_widget_window(
@@ -1883,6 +1888,8 @@ pub fn run() {
             taskbar::close_task_window,
             taskbar::minimize_task_window,
             taskbar::show_tb_menu,
+            taskbar::open_taskbar_panel,
+            panel::take_panel_mode,
             system::get_audio_state,
             system::set_audio_volume,
             system::set_audio_mute,
@@ -2073,9 +2080,15 @@ pub fn run() {
                 }
                 schedule_save(app);
             }
-            WindowEvent::Focused(_) => {
+            WindowEvent::Focused(focused) => {
+                let app = window.app_handle();
+                let label = window.label();
+                // 面板失焦即隐藏（标准 flyout 行为）
+                if !*focused && label == panel::PANEL_LABEL {
+                    let _ = window.hide();
+                }
                 #[cfg(target_os = "windows")]
-                reapply_glass_async(window.app_handle(), window.label());
+                reapply_glass_async(app, label);
             }
             _ => {}
         })

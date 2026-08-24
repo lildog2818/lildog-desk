@@ -304,7 +304,10 @@ pub async fn show_tb_menu(
             mk(format!("tb-task-min:{hwnd}"), "最小化")?,
             mk(format!("tb-task-close:{hwnd}"), "关闭窗口")?,
         ],
-        _ => vec![mk("tb-bar-close".into(), "关闭任务栏")?],
+        _ => vec![
+            mk("tb-bar-addpin".into(), "固定应用到任务栏…")?,
+            mk("tb-bar-close".into(), "关闭任务栏")?,
+        ],
     };
 
     let refs: Vec<&dyn IsMenuItem<tauri::Wry>> =
@@ -337,4 +340,15 @@ pub async fn show_tb_menu(
         Position::Physical(PhysicalPosition::new(ax, ay)),
     )
     .map_err(|e| e.to_string())
+}
+
+/// 打开快捷设置面板（settings / picker 两种内容模式）。
+/// 面板是独立置顶小窗，定位在任务栏上方右侧；失焦自动隐藏。
+#[tauri::command]
+pub async fn open_taskbar_panel(
+    app: AppHandle,
+    anchor: tauri::WebviewWindow,
+    mode: String,
+) -> Result<(), String> {
+    crate::panel::open(&app, &anchor, &mode)
 }

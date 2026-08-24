@@ -2,7 +2,7 @@
   "$schema": "gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "default capability for main and widget windows",
-  "windows": ["main", "w-*", "pin-*", "shot-overlay"],
+  "windows": ["main", "w-*", "pin-*", "shot-overlay", "taskbar-panel"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
