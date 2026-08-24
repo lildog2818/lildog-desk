@@ -1429,6 +1429,7 @@ pub fn run() {
                                         py = pos.y + cur.height as i32 - new_h;
                                     }
                                 }
+                                // 不显示预览框，松手后静默落位到阶梯尺寸
                                 state.pending_resize.lock().unwrap().insert(
                                     label.clone(),
                                     PendingResize {
@@ -1439,7 +1440,6 @@ pub fn run() {
                                         at: Instant::now(),
                                     },
                                 );
-                                preview_show(app, px, py, new_w, new_h);
                             } else {
                                 state.pending_resize.lock().unwrap().remove(&label);
                                 hide_preview_if_idle(app);
