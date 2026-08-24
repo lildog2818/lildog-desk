@@ -34,6 +34,16 @@ struct PendingSnap {
     at: Instant,
 }
 
+/// 待松手提交的尺寸落位（含边缘锚定修正后的位置）
+#[derive(Clone, Copy)]
+struct PendingResize {
+    w: u32,
+    h: u32,
+    x: i32,
+    y: i32,
+    at: Instant,
+}
+
 /// 一次进行中的尺寸调节会话
 #[derive(Clone)]
 struct ResizeSession {
@@ -52,6 +62,8 @@ struct AppState {
     latest_size: Mutex<HashMap<String, (f64, f64)>>,
     /// 拖动中产生的吸附预览目标：label -> 目标（松开鼠标左键时统一落位）
     pending_snap: Mutex<HashMap<String, PendingSnap>>,
+    /// 调节尺寸中的预览落位目标
+    pending_resize: Mutex<HashMap<String, PendingResize>>,
     /// 鼠标释放监听线程是否已启动
     watcher_started: AtomicBool,
     /// 去抖中的尺寸调节：label -> 会话
@@ -568,6 +580,16 @@ fn preview_hide(app: &AppHandle) {
     }
 }
 
+/// 仅当没有任何待定预览时才隐藏预览层
+fn hide_preview_if_idle(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.pending_snap.lock().unwrap().is_empty()
+        && state.pending_resize.lock().unwrap().is_empty()
+    {
+        preview_hide(app);
+    }
+}
+
 /// 提交松手时的待定吸附/尺寸目标
 fn commit_pending_drags(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -591,6 +613,27 @@ fn commit_pending_drags(app: &AppHandle) {
             let _ = w.set_position(PhysicalPosition::new(x, y));
         }
     }
+    let resizes: Vec<(String, PendingResize)> = {
+        let mut p = state.pending_resize.lock().unwrap();
+        let keys: Vec<String> = p.keys().cloned().collect();
+        let mut out = Vec::new();
+        for k in keys {
+            if let Some(r) = p.remove(&k) {
+                if now.duration_since(r.at) < Duration::from_millis(1500) {
+                    out.push((k, r));
+                }
+            }
+        }
+        out
+    };
+    for (label, r) in resizes {
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.set_size(tauri::PhysicalSize::new(r.w, r.h));
+            let _ = win.set_position(PhysicalPosition::new(r.x, r.y));
+        }
+    }
+    // 手势结束：清空尺寸会话，下次调节重新锚定起点
+    state.resize_pending.lock().unwrap().clear();
     preview_hide(app);
 }
 
@@ -1276,7 +1319,7 @@ pub fn run() {
                         }
                     } else {
                         state.pending_snap.lock().unwrap().remove(&label);
-                        preview_hide(app);
+                        hide_preview_if_idle(app);
                     }
                 }
                 schedule_save(app);
@@ -1284,9 +1327,11 @@ pub fn run() {
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
-                if let Some(win) = app.get_webview_window(&label) {
-                    clamp_size_into_monitors(&win);
+                let win = app.get_webview_window(&label);
+                if let Some(ref w) = win {
+                    clamp_size_into_monitors(w);
                 }
+                start_release_watcher(app);
                 let scale = window.scale_factor().unwrap_or(1.0);
                 let lw = size.width as f64 / scale;
                 let lh = size.height as f64 / scale;
@@ -1297,11 +1342,12 @@ pub fn run() {
                         .unwrap()
                         .insert(label.clone(), (lw, lh));
 
-                    // 尺寸阶梯去抖：拖动过程不干预窗口，停止约 160ms 后一次性吸附到步进，
-                    // 避免拖拽中反复 set_size 造成的抖动
+                    // 预览式尺寸阶梯：拖动过程零干预，实时显示量化目标预览框，
+                    // 松开鼠标左键后由监听线程一次性落位
                     let state = app.state::<AppState>();
                     let step = *state.size_step.lock().unwrap();
-                    let (gen, start_pos) = {
+                    // 记录本次调节手势的起点位置（用于判断拖动的是哪条边）
+                    let start_pos = {
                         let mut pend = state.resize_pending.lock().unwrap();
                         let entry = pend.entry(label.clone()).or_insert_with(|| {
                             ResizeSession {
@@ -1319,67 +1365,50 @@ pub fn run() {
                         entry.lh = lh;
                         entry.at = Instant::now();
                         entry.gen += 1;
-                        (entry.gen, entry.start_pos)
+                        entry.start_pos
                     };
-                    let app2 = app.clone();
-                    let label2 = label.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(160));
-                        let st = app2.state::<AppState>();
-                        let fresh = {
-                            let pend = st.resize_pending.lock().unwrap();
-                            matches!(
-                                pend.get(&label2),
-                                Some(p) if p.gen == gen
-                                    && p.at.elapsed() >= Duration::from_millis(150)
-                            )
-                        };
-                        if !fresh {
-                            return;
-                        }
-                        st.resize_pending.lock().unwrap().remove(&label2);
-                        let Some(win) = app2.get_webview_window(&label2) else {
-                            return;
-                        };
-                        let Ok(cur_phys) = win.outer_size() else {
-                            return;
-                        };
-                        let Ok(pos_phys) = win.outer_position() else {
-                            return;
-                        };
-                        let cscale = win.scale_factor().unwrap_or(1.0);
-                        let cw = cur_phys.width as f64 / cscale;
-                        let ch = cur_phys.height as f64 / cscale;
-                        let qw = quantize_logical(cw, step, 160.0);
-                        let qh = quantize_logical(ch, step, 96.0);
-                        let dw = ((qw - cw) * cscale).round() as i32;
-                        let dh = ((qh - ch) * cscale).round() as i32;
-                        if dw == 0 && dh == 0 {
-                            return;
-                        }
-
-                        // 锚定未拖动的边：调节期间位置发生变化的轴说明拖的是左/上边，
-                        // 量化后保持右/下边不动；位置未变的轴默认锚定左上，无需补偿。
-                        let new_w = (cur_phys.width as i32 + dw).max(1);
-                        let new_h = (cur_phys.height as i32 + dh).max(1);
-                        let mut np = pos_phys;
-                        if let Some((sx, sy)) = start_pos {
-                            if pos_phys.x != sx {
-                                np.x = pos_phys.x + cur_phys.width as i32 - new_w;
-                            }
-                            if pos_phys.y != sy {
-                                np.y = pos_phys.y + cur_phys.height as i32 - new_h;
+                    if let Some(w) = &win {
+                        if let (Ok(cur), Ok(pos)) =
+                            (w.outer_size(), w.outer_position())
+                        {
+                            let cw = cur.width as f64 / scale;
+                            let ch = cur.height as f64 / scale;
+                            let qw = quantize_logical(cw, step, 160.0);
+                            let qh = quantize_logical(ch, step, 96.0);
+                            let dw = ((qw - cw) * scale).round() as i32;
+                            let dh = ((qh - ch) * scale).round() as i32;
+                            if dw != 0 || dh != 0 {
+                                // 锚定未拖动的边：调节期间位置变化的轴说明拖的是左/上边，
+                                // 落位时保持右/下边不动；未变的轴默认锚定左上。
+                                let new_w = (cur.width as i32 + dw).max(1);
+                                let new_h = (cur.height as i32 + dh).max(1);
+                                let mut px = pos.x;
+                                let mut py = pos.y;
+                                if let Some((sx, sy)) = start_pos {
+                                    if pos.x != sx {
+                                        px = pos.x + cur.width as i32 - new_w;
+                                    }
+                                    if pos.y != sy {
+                                        py = pos.y + cur.height as i32 - new_h;
+                                    }
+                                }
+                                state.pending_resize.lock().unwrap().insert(
+                                    label.clone(),
+                                    PendingResize {
+                                        w: new_w as u32,
+                                        h: new_h as u32,
+                                        x: px,
+                                        y: py,
+                                        at: Instant::now(),
+                                    },
+                                );
+                                preview_show(app, px, py, new_w, new_h);
+                            } else {
+                                state.pending_resize.lock().unwrap().remove(&label);
+                                hide_preview_if_idle(app);
                             }
                         }
-                        let _ = win.set_size(tauri::PhysicalSize::new(
-                            new_w as u32,
-                            new_h as u32,
-                        ));
-                        if np != pos_phys {
-                            let _ =
-                                win.set_position(PhysicalPosition::new(np.x, np.y));
-                        }
-                    });
+                    }
                 }
                 schedule_save(app);
             }
