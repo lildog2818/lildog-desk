@@ -160,3 +160,7 @@ body.tb-body #app {
   font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
 }
+
+.tb-btn.sys.offline {
+  opacity: 0.45;
+}

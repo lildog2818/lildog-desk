@@ -1886,6 +1886,7 @@ pub fn run() {
             system::get_audio_state,
             system::set_audio_volume,
             system::set_audio_mute,
+            system::get_network_status,
             clipboard::read_clipboard_state,
             clipboard::write_clipboard_text,
             clipboard::write_clipboard_files,

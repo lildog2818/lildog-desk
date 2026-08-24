@@ -52,6 +52,7 @@ interface TbEls {
   wrap: HTMLElement;
   pins: HTMLElement;
   tasks: HTMLElement;
+  net: HTMLButtonElement;
   vol: HTMLButtonElement;
   time: HTMLElement;
   date: HTMLElement;
@@ -180,6 +181,32 @@ function handleMenuId(raw: string): void {
       .catch((e) => toast(String(e)));
   } else if (raw === "tb-bar-close") {
     void closeWidgetWindow("taskbar").catch((e) => toast(String(e)));
+  }
+}
+
+// ---------------- 网络（状态展示 + 跳转系统设置） ----------------
+
+const NET_ICON =
+  '<svg viewBox="0 0 24 24"><path d="M12 19.6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/><path d="M8.4 14.4a5.2 5.2 0 0 1 7.2 0M5.4 11.3a9.4 9.4 0 0 1 13.2 0M2.5 8.2a13.6 13.6 0 0 1 19 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+
+function renderNetIcon(st: { online: boolean; name: string; kind: string }): void {
+  if (!els) return;
+  els.net.innerHTML = NET_ICON;
+  els.net.classList.toggle("offline", !st.online);
+  els.net.title = st.online
+    ? `${st.kind === "wifi" ? "Wi-Fi" : "网络"}：${st.name || "已连接"}（点击打开网络设置）`
+    : "网络：未连接（点击打开网络设置）";
+}
+
+async function loadNetwork(): Promise<void> {
+  try {
+    renderNetIcon(
+      await invoke<{ online: boolean; name: string; kind: string }>(
+        "get_network_status",
+      ),
+    );
+  } catch {
+    /* 静默，下个周期重试 */
   }
 }
 
@@ -396,6 +423,7 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
         <div id="tb-tasks" class="tb-strip"></div>
       </div>
       <div id="tb-right">
+        <button id="tb-net" class="tb-btn sys" title="网络"></button>
         <button id="tb-vol" class="tb-btn sys" title="音量"></button>
         <div id="tb-clock">
           <div id="tb-time">--:--</div>
@@ -409,6 +437,7 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     wrap: root.querySelector<HTMLElement>("#tb-wrap")!,
     pins: root.querySelector<HTMLElement>("#tb-pins")!,
     tasks: root.querySelector<HTMLElement>("#tb-tasks")!,
+    net: root.querySelector<HTMLButtonElement>("#tb-net")!,
     vol: root.querySelector<HTMLButtonElement>("#tb-vol")!,
     time: root.querySelector<HTMLElement>("#tb-time")!,
     date: root.querySelector<HTMLElement>("#tb-date")!,
@@ -436,6 +465,13 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     adjustVolume(ev.deltaY < 0 ? 0.05 : -0.05);
   });
 
+  // 网络图标：点击打开系统网络设置；状态随轮询低频刷新
+  els.net.addEventListener("click", () => {
+    void invoke("open_target", { target: "ms-settings:network" }).catch((e) =>
+      toast(String(e)),
+    );
+  });
+
   // 原生菜单事件回环：后端把被点中的菜单项 id 原样转发回来
   unlistenMenu = await getCurrentWebview()
     .listen<string>("tb-menu", (ev) => handleMenuId(ev.payload))
@@ -443,12 +479,19 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
 
   renderPins();
   renderVolIcon();
+  renderNetIcon({ online: true, name: "", kind: "none" });
   tickClock();
   void loadAudioState();
+  void loadNetwork();
   await refreshTasks();
 
+  let netTick = 0;
   clockTimer = window.setInterval(tickClock, 1000);
-  pollTimer = window.setInterval(() => void refreshTasks(), 1500);
+  pollTimer = window.setInterval(() => {
+    void refreshTasks();
+    // 网络状态约每 6 秒刷新一次
+    if (++netTick % 4 === 0) void loadNetwork();
+  }, 1500);
 
   return () => {
     window.clearInterval(clockTimer);
