@@ -5,10 +5,16 @@ import {
   getWindowState,
   setAutostart,
   setBgOpacity,
+  setTextStroke,
   setTheme,
   setSizeStep,
   type ThemeCfg,
 } from "./winstate";
+
+/** 应用文字描边开关到当前窗口 */
+function applyTextStroke(on: boolean): void {
+  document.documentElement.dataset.stroke = on ? "on" : "off";
+}
 
 /** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
 export function initAppearance(): void {
@@ -17,6 +23,7 @@ export function initAppearance(): void {
       .then((st) => {
         applyPanelAlpha(st.bgOpacity);
         applyTheme(st);
+        applyTextStroke(st.textStroke !== false);
       })
       .catch(() => applyPanelAlpha(0.55));
   } catch {
@@ -27,6 +34,9 @@ export function initAppearance(): void {
     .catch(() => {});
   void getCurrentWebview()
     .listen<ThemeCfg>("theme", (ev) => applyTheme(ev.payload ?? {}))
+    .catch(() => {});
+  void getCurrentWebview()
+    .listen<boolean>("text-stroke", (ev) => applyTextStroke(ev.payload !== false))
     .catch(() => {});
 }
 
@@ -236,6 +246,28 @@ export function autostartRow(): HTMLDivElement {
   return autoRow;
 }
 
+/** 文字描边开关：细描边+阴影让文字在任意背景下可读 */
+function textStrokeRow(initial: boolean): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "auto-row";
+  const label = document.createElement("span");
+  label.textContent = "文字描边（增强可读性）";
+  const toggle = document.createElement("button");
+  toggle.className = "auto-toggle";
+  toggle.classList.toggle("on", initial);
+  row.append(label, toggle);
+  toggle.onclick = () => {
+    const next = !toggle.classList.contains("on");
+    toggle.classList.toggle("on", next);
+    applyTextStroke(next);
+    void setTextStroke(next).catch((e) => {
+      toggle.classList.toggle("on", !next);
+      toast(String(e));
+    });
+  };
+  return row;
+}
+
 export async function buildAppearancePop(
   withAutostart: boolean,
 ): Promise<HTMLDivElement> {
@@ -263,6 +295,7 @@ export async function buildAppearancePop(
         bgColor: st.bgColor || THEME_FALLBACK.bgColor,
       }),
     );
+    pop.appendChild(textStrokeRow(st.textStroke !== false));
     if (withAutostart) pop.appendChild(autostartRow());
   } catch {
     /* window state unavailable */

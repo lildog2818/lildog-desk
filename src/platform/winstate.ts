@@ -8,6 +8,7 @@ export interface WinState {
   sizeStep: number;
   fontColor?: string | null;
   bgColor?: string | null;
+  textStroke?: boolean;
 }
 
 export interface ThemeCfg {
@@ -42,6 +43,9 @@ export const setTheme = (theme: ThemeCfg): Promise<void> =>
     fontColor: theme.fontColor ?? "",
     bgColor: theme.bgColor ?? "",
   });
+
+export const setTextStroke = (enabled: boolean): Promise<void> =>
+  invoke("set_text_stroke", { enabled });
 
 export const getAutostart = (): Promise<boolean> => invoke("get_autostart");
 

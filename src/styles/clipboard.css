@@ -104,6 +104,15 @@
   border-color: var(--stroke);
 }
 
+.cb-row.sel {
+  background: linear-gradient(
+    160deg,
+    rgba(96, 165, 250, 0.16),
+    rgba(96, 165, 250, 0.05)
+  );
+  border-color: rgba(96, 165, 250, 0.45);
+}
+
 .cb-row-icon {
   width: 36px;
   height: 30px;

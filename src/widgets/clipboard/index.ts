@@ -1,4 +1,5 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { registerWidget } from "../../platform/registry";
 import { buildMenu, closeMenus, confirmDanger, toast } from "../../platform/shell";
 import { widgetLoad, widgetSave } from "../../platform/widget-data";
@@ -22,7 +23,6 @@ interface ClipItem {
 
 interface ClipData {
   items: ClipItem[];
-  maxItems: number;
 }
 
 /** 与 Rust ClipPayload(camelCase) 对应 */
@@ -37,18 +37,20 @@ interface ClipPayload {
   files?: string[];
 }
 
-type Tab = "all" | ClipKind;
+/** 页签：null 表示不筛选（混合视图），无「全部」按钮 */
+type Tab = ClipKind | null;
 
-const DEFAULT_MAX = 200;
-const ABSOLUTE_CAP = 800;
-const POLL_INTERVAL_MS = 600;
-
-let data: ClipData = { items: [], maxItems: DEFAULT_MAX };
+let data: ClipData = { items: [] };
 let lastSeq = 0;
 let saveTimer = 0;
 let pollTimer = 0;
-let tab: Tab = "all";
+let tab: Tab = null;
 let query = "";
+/** 键盘导航高亮的行 id */
+let selectedId: string | null = null;
+
+/** 缩略图 data-url 缓存 */
+const thumbCache = new Map<string, string>();
 
 function uid(): string {
   return crypto.randomUUID();
@@ -89,29 +91,9 @@ function fmtTime(ts: number): string {
 
 // ---------------- 入库 ----------------
 
-function trim(): void {
-  // 超出上限时从最旧的非置顶条目开始淘汰
-  while (data.items.length > data.maxItems) {
-    let idx = -1;
-    for (let i = data.items.length - 1; i >= 0; i -= 1) {
-      if (!data.items[i].pinned) {
-        idx = i;
-        break;
-      }
-    }
-    if (idx < 0) break; // 全是置顶项，交给绝对上限兜底
-    removeImageFile(data.items[idx]);
-    data.items.splice(idx, 1);
-  }
-  // 绝对上限（含置顶）防止无限膨胀
-  while (data.items.length > ABSOLUTE_CAP) {
-    removeImageFile(data.items[data.items.length - 1]);
-    data.items.pop();
-  }
-}
-
 function removeImageFile(item: ClipItem): void {
   if (item.kind === "image" && item.imagePath) {
+    thumbCache.delete(item.imagePath);
     void invoke("delete_clipboard_image", { path: item.imagePath }).catch(
       () => {},
     );
@@ -158,7 +140,6 @@ function ingest(p: ClipPayload): void {
       ts: Date.now(),
     });
   }
-  trim();
   persist();
   render();
 }
@@ -178,7 +159,8 @@ async function poll(): Promise<void> {
 
 // ---------------- 操作 ----------------
 
-async function copyItem(item: ClipItem): Promise<void> {
+/** 把条目写回系统剪贴板；返回是否成功 */
+async function writeToClipboard(item: ClipItem): Promise<boolean> {
   try {
     if (item.kind === "text") {
       lastSeq = await invoke<number>("write_clipboard_text", {
@@ -189,13 +171,44 @@ async function copyItem(item: ClipItem): Promise<void> {
         paths: item.files ?? [],
       });
     } else {
-      toast("图片回填将在后续版本支持");
-      return;
+      lastSeq = await invoke<number>("write_clipboard_image", {
+        path: item.imagePath ?? "",
+      });
     }
-    toast("已复制到剪贴板");
+    return true;
   } catch (e) {
     toast(String(e));
+    return false;
   }
+}
+
+/** 单击：复制到剪贴板 */
+function copyItem(item: ClipItem): void {
+  void writeToClipboard(item).then((ok) => {
+    if (ok) toast("已复制到剪贴板");
+  });
+}
+
+/** 双击 / Enter：粘贴回热键呼出前的窗口 */
+function pasteItem(item: ClipItem): void {
+  void writeToClipboard(item).then(async (ok) => {
+    if (!ok) return;
+    try {
+      await invoke("paste_to_last_target");
+    } catch (e) {
+      toast(String(e));
+    }
+  });
+}
+
+/** 图片贴图：弹出置顶可拖动缩放的预览窗 */
+function pinImage(item: ClipItem): void {
+  if (item.kind !== "image" || !item.imagePath) return;
+  void invoke("open_image_pin", {
+    path: item.imagePath,
+    w: item.width ?? 400,
+    h: item.height ?? 300,
+  }).catch((e) => toast(String(e)));
 }
 
 function deleteItem(item: ClipItem): void {
@@ -207,18 +220,52 @@ function deleteItem(item: ClipItem): void {
 
 // ---------------- 渲染 ----------------
 
+function setThumbImg(box: HTMLElement, url: string): void {
+  box.textContent = "";
+  const img = document.createElement("img");
+  img.src = url;
+  img.draggable = false;
+  box.appendChild(img);
+}
+
+function loadThumb(path: string, box: HTMLElement): void {
+  const cached = thumbCache.get(path);
+  if (cached) {
+    setThumbImg(box, cached);
+    return;
+  }
+  void invoke<string>("clip_image_data_url", { path, maxEdge: 96 })
+    .then((url) => {
+      thumbCache.set(path, url);
+      if (box.isConnected) setThumbImg(box, url);
+    })
+    .catch(() => {});
+}
+
 function rowEl(item: ClipItem): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "cb-row";
+  row.className =
+    "cb-row" + (item.id === selectedId ? " sel" : "");
+  row.dataset.id = item.id;
 
   const icon = document.createElement("div");
   icon.className = "cb-row-icon";
-  if (item.kind === "image" && item.imagePath) {
-    const img = document.createElement("img");
-    img.src = convertFileSrc(item.imagePath);
-    img.draggable = false;
-    icon.appendChild(img);
-  } else {
+  let thumbSrc: string | null = null;
+  if (item.kind === "image") {
+    if (item.imagePath) {
+      // 有缓存直接显示；否则走异步 data-url（避免 asset 协议目录限制）
+      const cached = thumbCache.get(item.imagePath);
+      if (cached) thumbSrc = cached;
+    }
+    if (thumbSrc) {
+      const img = document.createElement("img");
+      img.src = thumbSrc;
+      img.draggable = false;
+      icon.appendChild(img);
+    } else {
+      icon.textContent = "🖼️";
+      if (item.imagePath) loadThumb(item.imagePath, icon);
+    }  } else {
     icon.textContent = item.kind === "files" ? "📁" : "📄";
   }
 
@@ -246,11 +293,18 @@ function rowEl(item: ClipItem): HTMLDivElement {
   time.textContent = fmtTime(item.ts);
 
   row.append(icon, main, time);
-  row.onclick = () => void copyItem(item);
+  row.onclick = () => copyItem(item);
+  row.ondblclick = () => pasteItem(item);
   row.oncontextmenu = (ev) => {
     ev.preventDefault();
-    buildMenu(ev.clientX, ev.clientY, [
-      { label: "复制", action: () => void copyItem(item) },
+    selectedId = item.id;
+    render();
+    const entries = [
+      { label: "复制", action: () => copyItem(item) },
+      ...(item.kind === "image"
+        ? [{ label: "贴图", action: () => pinImage(item) }]
+        : []),
+      { label: "粘贴到原窗口", action: () => pasteItem(item) },
       {
         label: item.pinned ? "取消置顶" : "置顶",
         action: () => {
@@ -259,12 +313,10 @@ function rowEl(item: ClipItem): HTMLDivElement {
           render();
         },
       },
-      {
-        label: "删除",
-        danger: true,
-        action: () => deleteItem(item),
-      },
-    ]);
+      { label: undefined, action: undefined },
+      { label: "删除", danger: true, action: () => deleteItem(item) },
+    ];
+    buildMenu(ev.clientX, ev.clientY, entries);
   };
   return row;
 }
@@ -274,10 +326,10 @@ function visibleItems(): ClipItem[] {
   const pinned: ClipItem[] = [];
   const rest: ClipItem[] = [];
   for (const it of data.items) {
-    if (tab !== "all" && it.kind !== tab) continue;
+    if (tab !== null && it.kind !== tab) continue;
     if (q) {
-      // 图片无名称可搜；图片页签下直接显示全部图片
-      if (tab === "all" && it.kind === "image") continue;
+      // 混合视图下图片不参与文本搜索；图片页签下显示全部图片
+      if (tab === null && it.kind === "image") continue;
       if (
         tab !== "image" &&
         !(
@@ -312,24 +364,29 @@ function render(): void {
     hint.appendChild(dog);
     hint.appendChild(
       document.createTextNode(
-        query.trim() || tab !== "all" ? "没有匹配的记录" : "去任意应用复制点什么吧",
+        query.trim() || tab !== null ? "没有匹配的记录" : "去任意应用复制点什么吧",
       ),
     );
     list.appendChild(hint);
   }
 
   const footer = document.querySelector<HTMLElement>(".qw-footer");
-  if (footer) footer.textContent = `${data.items.length} 条记录 · 上限 ${data.maxItems}`;
+  if (footer) footer.textContent = `${data.items.length} 条记录`;
 }
 
 // ---------------- 挂载 ----------------
 
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: "all", label: "全部" },
+const TABS: Array<{ key: Exclude<Tab, null>; label: string }> = [
   { key: "text", label: "文字" },
   { key: "image", label: "图片" },
   { key: "files", label: "文件" },
 ];
+
+function paintTabs(tabsBox: HTMLElement): void {
+  tabsBox.querySelectorAll<HTMLElement>(".cb-tab").forEach((el) => {
+    el.classList.toggle("on", el.dataset.key === tab);
+  });
+}
 
 function mountClipboard(root: HTMLElement): () => void {
   const shell = buildWidgetShell(root, "📋", "剪贴板");
@@ -340,20 +397,18 @@ function mountClipboard(root: HTMLElement): () => void {
 
   const tabsBox = document.createElement("div");
   tabsBox.className = "cb-tabs";
-  const tabBtns = new Map<Tab, HTMLButtonElement>();
   for (const t of TABS) {
     const b = document.createElement("button");
-    b.className = `cb-tab${t.key === tab ? " on" : ""}`;
+    b.className = "cb-tab";
+    b.dataset.key = t.key;
     b.textContent = t.label;
+    b.title = "再次点击取消筛选";
     b.onclick = () => {
-      tab = t.key;
-      tabsBox
-        .querySelectorAll(".cb-tab")
-        .forEach((el) => el.classList.remove("on"));
-      b.classList.add("on");
+      tab = tab === t.key ? null : t.key;
+      selectedId = null;
+      paintTabs(tabsBox);
       render();
     };
-    tabBtns.set(t.key, b);
     tabsBox.appendChild(b);
   }
 
@@ -363,6 +418,7 @@ function mountClipboard(root: HTMLElement): () => void {
   search.spellcheck = false;
   search.oninput = () => {
     query = search.value;
+    selectedId = null;
     render();
   };
 
@@ -370,24 +426,67 @@ function mountClipboard(root: HTMLElement): () => void {
 
   const list = document.createElement("div");
   list.className = "cb-list";
+  list.tabIndex = 0;
   shell.body.classList.add("cb-body");
   shell.body.append(toolbar, list);
 
-  // 设置菜单：条数上限 + 清空全部
+  // 键盘导航：↑↓ 选择、Enter 粘贴高亮项
+  list.addEventListener("keydown", (ev) => {
+    const shown = visibleItems();
+    if (shown.length === 0) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const idx = shown.findIndex((i) => i.id === selectedId);
+      const next =
+        ev.key === "ArrowDown"
+          ? Math.min(shown.length - 1, idx + 1)
+          : idx <= 0
+            ? 0
+            : idx - 1;
+      selectedId = shown[Math.max(0, next)].id;
+      render();
+      root
+        .querySelector<HTMLElement>(`.cb-row[data-id="${selectedId}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      const target =
+        shown.find((i) => i.id === selectedId) ?? shown[0];
+      if (target) pasteItem(target);
+    }
+  });
+
+  // 设置菜单：保存位置 + 清空全部
   shell.btnGear.onclick = (ev) => {
     const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
     buildMenu(rect.left, rect.bottom + 6, [
       {
-        label: `条数上限（当前 ${data.maxItems}）`,
-        sub: [100, 200, 500].map((n) => ({
-          label: String(n),
-          action: () => {
-            data.maxItems = n;
-            trim();
-            persist();
-            render();
-          },
-        })),
+        label: "保存位置…",
+        action: () => {
+          void openFileDialog({ directory: true, multiple: false })
+            .then((picked) => {
+              const dir = Array.isArray(picked) ? picked[0] : picked;
+              if (!dir) return;
+              return invoke("set_clip_dir", { path: dir }).then(() => {
+                thumbCache.clear();
+                render();
+                toast("已切换保存位置");
+              });
+            })
+            .catch((e) => toast(String(e)));
+        },
+      },
+      {
+        label: "恢复默认位置",
+        action: () => {
+          void invoke("set_clip_dir", { path: null })
+            .then(() => {
+              thumbCache.clear();
+              render();
+              toast("已恢复默认位置");
+            })
+            .catch((e) => toast(String(e)));
+        },
       },
       { label: undefined, action: undefined },
       {
@@ -415,19 +514,13 @@ function mountClipboard(root: HTMLElement): () => void {
             (i.kind === "text" || i.kind === "image" || i.kind === "files"),
         )
       : [];
-    data = {
-      items,
-      maxItems:
-        typeof d.maxItems === "number"
-          ? Math.min(1000, Math.max(50, Math.round(d.maxItems)))
-          : DEFAULT_MAX,
-    };
+    data = { items }; // 不设条数上限；旧的 maxItems 字段忽略
     render();
   });
 
   render();
 
-  pollTimer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+  pollTimer = window.setInterval(() => void poll(), 600);
   void poll();
 
   return () => {
@@ -441,7 +534,7 @@ registerWidget({
   name: "剪贴板",
   icon: "📋",
   color: "#60a5fa",
-  desc: "自动记录复制的文字、图片与文件，单击回填",
+  desc: "自动记录复制的文字、图片与文件，单击回填、双击粘贴",
   width: 320,
   height: 480,
   minWidth: 260,

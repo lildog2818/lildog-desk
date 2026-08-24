@@ -1,10 +1,13 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/glass.css";
 import "./styles/dashboard.css";
+import "./styles/pinshot.css";
 import { getWidget } from "./platform/registry";
 import { installGlobalDismiss } from "./platform/shell";
 import { initAppearance } from "./platform/appearance";
 import { renderDashboard } from "./views/dashboard";
+import { mountPinViewer } from "./views/pin-viewer";
+import { mountShotOverlay } from "./views/shot-overlay";
 import "./widgets/launcher";
 import "./widgets/opencode-quota";
 import "./widgets/deepseek-balance";
@@ -23,6 +26,18 @@ async function route(): Promise<void> {
   // 吸附预览层：仅渲染一个虚线框
   if (label === "snap-preview") {
     app.innerHTML = '<div id="snap-preview-box"></div>';
+    return;
+  }
+
+  // 贴图窗
+  if (label.startsWith("pin-")) {
+    mountPinViewer(app);
+    return;
+  }
+
+  // 截图覆盖层
+  if (label === "shot-overlay") {
+    mountShotOverlay(app);
     return;
   }
 

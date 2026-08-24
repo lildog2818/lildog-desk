@@ -78,6 +78,12 @@ pub struct AppSettings {
     /// 主题：背景色
     #[serde(default)]
     pub bg_color: Option<String>,
+    /// 文字描边增强可读性（None 视为开启）
+    #[serde(default)]
+    pub text_stroke: Option<bool>,
+    /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
+    #[serde(default)]
+    pub clip_dir: Option<String>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }

@@ -6,7 +6,7 @@ mod storage;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -78,6 +78,14 @@ struct AppState {
     glass_value: Mutex<f64>,
     size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
+    /// 贴图窗自增序号（生成唯一 label）
+    pin_seq: AtomicU64,
+    /// 热键呼出面板时记录的前台窗口，粘贴时还原焦点
+    last_foreground: Mutex<isize>,
+    /// 进行中的截图用途：0=无 1=复制到剪贴板 2=自动贴图
+    shot_target: Mutex<u8>,
+    /// 已注册的全局热键：shortcut -> 用途（1/2/3）
+    hotkey_map: Mutex<Vec<(tauri_plugin_global_shortcut::Shortcut, u8)>>,
 }
 
 // ---------------- 小组件数据 ----------------
@@ -122,7 +130,19 @@ async fn get_window_state(
         "sizeStep": settings.size_step(),
         "fontColor": settings.font_color(),
         "bgColor": settings.bg_color(),
+        "textStroke": settings.text_stroke.unwrap_or(true),
     }))
+}
+
+/// 文字描边开关：广播到所有窗口
+#[tauri::command]
+async fn set_text_stroke(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.text_stroke = Some(enabled);
+    storage::save_settings(&dir, &s);
+    let _ = app.emit("text-stroke", enabled);
+    Ok(())
 }
 
 fn valid_hex_color(s: &str) -> bool {
@@ -448,6 +468,344 @@ async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), St
         let _ = win.hide();
     }
     Ok(())
+}
+
+// ---------------- 贴图窗 ----------------
+
+const PIN_MAX_W: i32 = 1400;
+const PIN_MAX_H: i32 = 900;
+
+/// 打开贴图窗：等比缩放至屏幕友好尺寸，创建后推送图片数据
+pub(crate) async fn open_pin_window(
+    app: &AppHandle,
+    path: String,
+    w: i32,
+    h: i32,
+) -> Result<(), String> {
+    clipboard::validate_clip_image_path(app, &path)?;
+    if w <= 0 || h <= 0 {
+        return Err("图片尺寸无效".into());
+    }
+    let ratio = 1.0_f64
+        .min(PIN_MAX_W as f64 / w as f64)
+        .min(PIN_MAX_H as f64 / h as f64);
+    let pw = ((w as f64 * ratio).round() as i32).max(24);
+    let ph = ((h as f64 * ratio).round() as i32).max(24);
+
+    let seq = app.state::<AppState>().pin_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let label = format!("pin-{seq}");
+    let win = if let Some(existing) = app.get_webview_window(&label) {
+        existing
+    } else {
+        WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+            .title("贴图")
+            .inner_size(200.0, 150.0)
+            .decorations(false)
+            .transparent(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .shadow(false)
+            .visible(false)
+            .always_on_top(true)
+            .build()
+            .map_err(|e| e.to_string())?
+    };
+    #[cfg(target_os = "windows")]
+    round_window_corners(&win);
+    let _ = win.set_size(tauri::PhysicalSize::new(pw.max(1) as u32, ph.max(1) as u32));
+    let _ = win.show();
+    let _ = win.set_focus();
+    let _ = app.emit_to(
+        &label,
+        "pin-image",
+        serde_json::json!({ "path": path, "width": w, "height": h }),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_image_pin(
+    app: AppHandle,
+    path: String,
+    w: i32,
+    h: i32,
+) -> Result<(), String> {
+    open_pin_window(&app, path, w, h).await
+}
+
+// ---------------- 区域截图 ----------------
+
+/// 启动截图：在光标所在显示器上铺满覆盖层，等待前端回传选区
+fn launch_shot(app: &AppHandle, target: u8) -> Result<(), String> {
+    *app.state::<AppState>().shot_target.lock().unwrap() = target;
+
+    #[cfg(target_os = "windows")]
+    let (mx, my, mw, mh) = unsafe {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO::default();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let _ = GetMonitorInfoW(mon, &mut mi);
+        (
+            mi.rcMonitor.left,
+            mi.rcMonitor.top,
+            mi.rcMonitor.right - mi.rcMonitor.left,
+            mi.rcMonitor.bottom - mi.rcMonitor.top,
+        )
+    };
+    #[cfg(not(target_os = "windows"))]
+    let (mx, my, mw, mh) = (0, 0, 1200, 800);
+
+    if mw < 8 || mh < 8 {
+        return Err("无法获取显示器信息".into());
+    }
+
+    let win = if let Some(win) = app.get_webview_window("shot-overlay") {
+        win
+    } else {
+        WebviewWindowBuilder::new(
+            app,
+            "shot-overlay",
+            WebviewUrl::App("index.html".into()),
+        )
+        .title("截图")
+        .decorations(false)
+        .transparent(true)
+        .resizable(false)
+        .skip_taskbar(true)
+        .shadow(false)
+        .always_on_top(true)
+        .focused(true)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())?
+    };
+    let _ = win.set_size(tauri::PhysicalSize::new(mw.max(1) as u32, mh.max(1) as u32));
+    let _ = win.set_position(PhysicalPosition::new(mx, my));
+    let _ = win.set_always_on_top(true);
+    let _ = win.show();
+    let _ = win.set_focus();
+
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let _ = app.emit_to(
+        "shot-overlay",
+        "shot-context",
+        serde_json::json!({
+            "originX": mx, "originY": my,
+            "scale": scale, "width": mw, "height": mh,
+            "target": target,
+        }),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_shot(app: AppHandle, target: String) -> Result<(), String> {
+    launch_shot(&app, if target == "pin" { 2 } else { 1 })
+}
+
+/// GDI 抓取屏幕物理区域为 RGBA
+#[cfg(target_os = "windows")]
+unsafe fn capture_screen_region(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> Result<image::RgbaImage, String> {
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        GetDIBits, GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+        CAPTUREBLT, DIB_RGB_COLORS, SRCCOPY,
+    };
+
+    if w <= 0 || h <= 0 {
+        return Err("选区尺寸无效".into());
+    }
+    let hdc_screen = GetWindowDC(None);
+    if hdc_screen.is_invalid() {
+        return Err("获取屏幕 DC 失败".into());
+    }
+    let mem = CreateCompatibleDC(Some(hdc_screen));
+    let bmp = CreateCompatibleBitmap(hdc_screen, w, h);
+    if bmp.is_invalid() {
+        return Err("创建兼容位图失败".into());
+    }
+    let old = SelectObject(mem, bmp.into());
+
+    let blt = BitBlt(
+        mem,
+        0,
+        0,
+        w,
+        h,
+        Some(hdc_screen),
+        x,
+        y,
+        SRCCOPY | CAPTUREBLT,
+    );
+
+    let mut buf = vec![0u8; w as usize * h as usize * 4];
+    if blt.is_ok() {
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h; // 自上而下
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = 0;
+        let lines = GetDIBits(
+            mem,
+            bmp,
+            0,
+            h as u32,
+            Some(buf.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        if lines == 0 {
+            return Err("读取屏幕像素失败".into());
+        }
+    } else {
+        return Err("屏幕拷贝失败".into());
+    }
+
+    let _ = SelectObject(mem, old);
+    let _ = DeleteObject(bmp.into());
+    let _ = DeleteDC(mem);
+    ReleaseDC(None, hdc_screen);
+
+    for px in buf.chunks_exact_mut(4) {
+        px.swap(0, 2); // BGRA → RGBA
+    }
+    image::RgbaImage::from_raw(w as u32, h as u32, buf).ok_or_else(|| "像素缓冲不匹配".into())
+}
+
+/// 前端松开鼠标后提交物理坐标选区；按用途写剪贴板或直接贴图
+#[tauri::command]
+async fn commit_shot_rect(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> Result<String, String> {
+    let target = *app.state::<AppState>().shot_target.lock().unwrap();
+    if target == 0 {
+        return Err("没有进行中的截图".into());
+    }
+    if let Some(win) = app.get_webview_window("shot-overlay") {
+        let _ = win.hide();
+    }
+    std::thread::sleep(Duration::from_millis(130));
+
+    #[cfg(target_os = "windows")]
+    let rgba = unsafe { capture_screen_region(x, y, w.max(1), h.max(1))? };
+    #[cfg(not(target_os = "windows"))]
+    let rgba = image::RgbaImage::new(1, 1);
+
+    let (iw, ih) = (rgba.width() as i32, rgba.height() as i32);
+    let dir = clipboard::images_dir(&app)?;
+    let out = dir.join(format!("{}.png", uuid::Uuid::new_v4()));
+    rgba.save(&out).map_err(|e| format!("保存截图失败:{e}"))?;
+
+    clipboard::write_rgba_to_clipboard(rgba).await?;
+
+    let path = out.to_string_lossy().into_owned();
+    if target == 2 {
+        open_pin_window(&app, path.clone(), iw, ih).await?;
+    }
+    *app.state::<AppState>().shot_target.lock().unwrap() = 0;
+    Ok(path)
+}
+
+#[tauri::command]
+async fn cancel_shot(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("shot-overlay") {
+        let _ = win.hide();
+    }
+    *app.state::<AppState>().shot_target.lock().unwrap() = 0;
+    Ok(())
+}
+
+// ---------------- 粘贴回填 ----------------
+
+/// 把内容粘贴回热键呼出面板之前的前台窗口（还原焦点 + 模拟 Ctrl+V）
+#[tauri::command]
+async fn paste_to_last_target(app: AppHandle) -> Result<(), String> {
+    let h = *app.state::<AppState>().last_foreground.lock().unwrap();
+    if h == 0 {
+        return Err("没有可粘贴的目标窗口".into());
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
+            VK_V,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetForegroundWindow, ShowWindowAsync, SW_RESTORE,
+        };
+
+        let hwnd = HWND(h as *mut core::ffi::c_void);
+        let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+        let _ = SetForegroundWindow(hwnd);
+        std::thread::sleep(Duration::from_millis(90));
+
+        let key = |vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+                   up: bool| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else {
+                        windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0)
+                    },
+                    ..Default::default()
+                },
+            },
+        };
+        let seq = [
+            key(VK_CONTROL, false),
+            key(VK_V, false),
+            key(VK_V, true),
+            key(VK_CONTROL, true),
+        ];
+        let sent = SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
+        if sent != 4 {
+            return Err("模拟按键失败".into());
+        }
+    }
+    Ok(())
+}
+
+/// 记录当前前台窗口并呼出剪贴板面板
+fn summon_clipboard_panel(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        let fg = GetForegroundWindow();
+        *app.state::<AppState>().last_foreground.lock().unwrap() =
+            fg.0 as isize;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        *app.state::<AppState>().last_foreground.lock().unwrap() = 0;
+    }
+
+    if let Some(win) = app.get_webview_window("w-clipboard") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        let _ = toggle_widget_window_cmd(app, "clipboard", "lildog · 剪贴板", 320.0, 480.0);
+    }
 }
 
 // ---------------- 托盘 ----------------
@@ -1255,6 +1613,39 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     rebuild_tray_menu(app.handle(), &[])?;
 
+    // 全局热键：截图(1) / 截图并贴图(2) / 呼出剪贴板面板(3)。
+    // 首选被占用时沿候选链回退（例如 WPF 版剪贴板工具占用了 Ctrl+Alt+A）。
+    {
+        use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+        let gs = app.handle().global_shortcut();
+        let chains: [(&[&str], u8); 3] = [
+            (&["ctrl+alt+a", "ctrl+alt+x", "ctrl+alt+c"], 1),
+            (&["ctrl+alt+s", "ctrl+alt+d", "ctrl+alt+f"], 2),
+            (&["ctrl+`", "ctrl+alt+p"], 3),
+        ];
+        let mut bound: Vec<String> = Vec::new();
+        for (candidates, intent) in chains {
+            for cand in candidates {
+                let Ok(sc) = cand.parse::<Shortcut>() else {
+                    continue;
+                };
+                match gs.register(sc.clone()) {
+                    Ok(_) => {
+                        app.state::<AppState>()
+                            .hotkey_map
+                            .lock()
+                            .unwrap()
+                            .push((sc, intent));
+                        bound.push(format!("{cand}"));
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+        eprintln!("global hotkeys bound: {bound:?}");
+    }
+
     // 吸附预览层：透明点击穿透悬浮窗，事件循环启动前创建避免死锁
     {
         let preview = WebviewWindowBuilder::new(
@@ -1340,11 +1731,38 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let intent = app
+                            .state::<AppState>()
+                            .hotkey_map
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .find_map(|(s, i)| (s == shortcut).then_some(*i));
+                        if let Some(intent) = intent {
+                            let app = app.clone();
+                            // 窗口操作离开事件回调线程，避免死锁
+                            std::thread::spawn(move || match intent {
+                                1 | 2 => {
+                                    let _ = launch_shot(&app, intent);
+                                }
+                                3 => summon_clipboard_panel(&app),
+                                _ => {}
+                            });
+                        }
+                    }
+                })
+                .build(),
+        )
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             load_widget_data,
             save_widget_data,
             get_window_state,
+            set_text_stroke,
             set_size_step,
             set_theme,
             set_pinned,
@@ -1365,7 +1783,15 @@ pub fn run() {
             clipboard::read_clipboard_state,
             clipboard::write_clipboard_text,
             clipboard::write_clipboard_files,
+            clipboard::write_clipboard_image,
             clipboard::delete_clipboard_image,
+            clipboard::clip_image_data_url,
+            clipboard::set_clip_dir,
+            open_image_pin,
+            start_shot,
+            commit_shot_rect,
+            cancel_shot,
+            paste_to_last_target,
             get_autostart,
             set_autostart
         ])
