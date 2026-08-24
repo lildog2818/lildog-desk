@@ -1119,7 +1119,7 @@ pub fn run() {
                         let pend = state.resize_pending.lock().unwrap();
                         matches!(
                             pend.get(&label),
-                            Some(p) if p.3.elapsed() <= Duration::from_millis(220)
+                            Some(p) if p.at.elapsed() <= Duration::from_millis(220)
                         )
                     };
 
