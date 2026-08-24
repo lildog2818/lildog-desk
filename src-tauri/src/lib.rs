@@ -31,7 +31,7 @@ struct AppState {
     latest_pos: Mutex<HashMap<String, (i32, i32)>>,
     latest_size: Mutex<HashMap<String, (f64, f64)>>,
     /// 已触发吸附并处于锁定态的窗口：label -> 吸附落点。
-    /// 锁定期间不再重复吸附，避免“吸住后拖不动”。
+    /// 锁定期间若目标不变则完全跟手，目标变化或消失时立即更新/解锁。
     snap_locks: Mutex<HashMap<String, (i32, i32)>>,
     /// 去抖中的尺寸调节：label -> (逻辑宽, 逻辑高, 代数, 最近时间)
     resize_pending: Mutex<HashMap<String, (f64, f64, u64, Instant)>>,
@@ -527,8 +527,6 @@ fn resolve_opencode_key() -> Result<String, String> {
 // ---------------- 几何与位置记忆 ----------------
 
 const SNAP_ENGAGE_LOGICAL: f64 = 12.0;
-/// 迟滞脱离：吸附锁定后，累计位移超过该距离才解除锁定（远大于吸附感应距离）
-const SNAP_ESCAPE_LOGICAL: f64 = 28.0;
 
 /// 将逻辑尺寸量化到步进的整数倍，便于组件窗口对齐拼接
 fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
@@ -575,8 +573,9 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
         let ot = op.y;
         let ob = op.y + os.height as i32;
 
-        let v_overlap = t < ob && b > ot;
-        if v_overlap {
+        // 「接近」而非严格重叠：垂直/水平范围相差不超过阈值即可参与对齐
+        let v_near = t < ob + th && b > ot - th;
+        if v_near {
             if (l - or_).abs() <= th {
                 l = or_;
                 r = l + w;
@@ -593,8 +592,8 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
                 l = r - w;
             }
         }
-        let h_overlap = l < or_ && r > ol;
-        if h_overlap {
+        let h_near = l < or_ + th && r > ol - th;
+        if h_near {
             if (t - ob).abs() <= th {
                 t = ob;
                 b = t + h;
@@ -623,8 +622,9 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
             let mt = mp.y;
             let mb = mp.y + ms.height as i32;
 
-            let v_overlap = t < mb && b > mt;
-            if v_overlap {
+            // 「接近」而非严格重叠，与窗口间对齐保持一致
+            let v_near = t < mb + th && b > mt - th;
+            if v_near {
                 if (l - ml).abs() <= th {
                     l = ml;
                     r = l + w;
@@ -633,8 +633,8 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
                     r = mr;
                 }
             }
-            let h_overlap = l < mr && r > ml;
-            if h_overlap {
+            let h_near = l < mr + th && r > ml - th;
+            if h_near {
                 if (t - mt).abs() <= th {
                     t = mt;
                     b = t + h;
@@ -1099,9 +1099,6 @@ pub fn run() {
                 let label = window.label().to_string();
                 if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
-                    let scale = win.scale_factor().unwrap_or(1.0);
-                    let escape_px =
-                        (SNAP_ESCAPE_LOGICAL * scale).round() as i32;
                     let state = app.state::<AppState>();
                     let mut latest = state.latest_pos.lock().unwrap();
                     let mut locks = state.snap_locks.lock().unwrap();
@@ -1119,28 +1116,25 @@ pub fn run() {
                         locks.remove(&label);
                         (cx, cy)
                     } else {
-                        // 迟滞吸附：锁定期间窗口完全跟手，累计位移超过脱离阈值才解锁
-                        let mut hold = false;
-                        if let Some(origin) = locks.get(&label).copied() {
-                            if (cx - origin.0).abs() > escape_px
-                                || (cy - origin.1).abs() > escape_px
-                            {
-                                locks.remove(&label);
-                            } else {
-                                hold = true;
-                            }
-                        }
-
-                        if hold {
-                            (cx, cy)
-                        } else {
-                            let (sx, sy) = snap_position(&win, app, cx, cy);
-                            if sx != cx || sy != cy {
-                                locks.insert(label.clone(), (sx, sy));
-                                (sx, sy)
-                            } else {
+                        // 每次移动都重新评估最近吸附目标：
+                        // · 目标与当前锁定相同 → 完全跟手，不反复拉扯
+                        // · 目标变化（对齐到另一条边）→ 立即跳过去
+                        // · 无目标 → 立即解锁，保证下次贴近边缘能重新触发
+                        let (sx, sy) = snap_position(&win, app, cx, cy);
+                        if sx != cx || sy != cy {
+                            let same_as_lock = matches!(
+                                locks.get(&label),
+                                Some(o) if *o == (sx, sy)
+                            );
+                            locks.insert(label.clone(), (sx, sy));
+                            if same_as_lock {
                                 (cx, cy)
+                            } else {
+                                (sx, sy)
                             }
+                        } else {
+                            locks.remove(&label);
+                            (cx, cy)
                         }
                     };
                     if final_pos.0 != pos.x || final_pos.1 != pos.y {
