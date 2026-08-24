@@ -710,8 +710,8 @@ fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
     ((v / s).round() * s).max(min)
 }
 
-/// 磁性吸附：拖动时窗口边缘贴近其他可见窗口或屏幕边缘则自动贴合。
-/// 窗口之间允许重叠；除首尾拼接外，还支持同边对齐（左/右/上/下）。
+/// 吸附对齐：拖动时窗口边缘贴近**其他小组件窗口**则给出预览对齐位。
+/// 不与桌面/屏幕边缘吸附；窗口之间允许重叠，除首尾拼接外还支持同边对齐（左/右/上/下）。
 /// 返回 (吸附后位置, 是否处于感应区内)。感应区内即使无需位移也返回 true，
 /// 用于区分「已落在目标上」和「周边没有目标」。
 fn snap_position(
@@ -794,52 +794,6 @@ fn snap_position(
                 engaged = true;
                 t = *nt;
                 b = t + h;
-            }
-        }
-    }
-
-    // 与屏幕边缘吸附
-    if let Ok(monitors) = win.available_monitors() {
-        for m in monitors {
-            let mp = m.position();
-            let ms = m.size();
-            let ml = mp.x;
-            let mr = mp.x + ms.width as i32;
-            let mt = mp.y;
-            let mb = mp.y + ms.height as i32;
-
-            // 「接近」而非严格重叠，与窗口间对齐保持一致
-            let v_near = t < mb + th && b > mt - th;
-            if v_near {
-                let cands = [
-                    (ml, (l - ml).abs()),
-                    (mr - w, (r - mr).abs()),
-                ];
-                if let Some(&(_, nl)) = cands
-                    .iter()
-                    .filter(|(_, d)| *d <= th)
-                    .min_by_key(|(_, d)| *d)
-                {
-                    engaged = true;
-                    l = nl;
-                    r = nl + w;
-                }
-            }
-            let h_near = l < mr + th && r > ml - th;
-            if h_near {
-                let cands = [
-                    (mt, (t - mt).abs()),
-                    (mb - h, (b - mb).abs()),
-                ];
-                if let Some(&(_, nt)) = cands
-                    .iter()
-                    .filter(|(_, d)| *d <= th)
-                    .min_by_key(|(_, d)| *d)
-                {
-                    engaged = true;
-                    t = nt;
-                    b = nt + h;
-                }
             }
         }
     }
