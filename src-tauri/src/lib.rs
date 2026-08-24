@@ -5,6 +5,7 @@ mod storage;
 use std::collections::HashMap;
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,14 @@ struct TrayEntry {
     height: f64,
 }
 
+/// 待松手提交的吸附目标
+#[derive(Clone, Copy)]
+struct PendingSnap {
+    x: i32,
+    y: i32,
+    at: Instant,
+}
+
 /// 一次进行中的尺寸调节会话
 #[derive(Clone)]
 struct ResizeSession {
@@ -41,9 +50,10 @@ struct AppState {
     last_save: Mutex<Option<Instant>>,
     latest_pos: Mutex<HashMap<String, (i32, i32)>>,
     latest_size: Mutex<HashMap<String, (f64, f64)>>,
-    /// 已触发吸附并处于锁定态的窗口：label -> 吸附落点。
-    /// 锁定期间若目标不变则完全跟手，目标变化或消失时立即更新/解锁。
-    snap_locks: Mutex<HashMap<String, (i32, i32)>>,
+    /// 拖动中产生的吸附预览目标：label -> 目标（松开鼠标左键时统一落位）
+    pending_snap: Mutex<HashMap<String, PendingSnap>>,
+    /// 鼠标释放监听线程是否已启动
+    watcher_started: AtomicBool,
     /// 去抖中的尺寸调节：label -> 会话
     resize_pending: Mutex<HashMap<String, ResizeSession>>,
     glass_value: Mutex<f64>,
@@ -285,12 +295,6 @@ fn ensure_widget_window(
         let _ = existing.set_focus();
         return Ok(());
     }
-    // 新建窗口前清掉历史吸附锁，避免沿用旧位置的锁定态
-    app.state::<AppState>()
-        .snap_locks
-        .lock()
-        .unwrap()
-        .remove(&label);
 
     let dir = storage::data_dir(app);
     let settings = storage::load_settings(&dir);
@@ -541,6 +545,81 @@ fn resolve_opencode_key() -> Result<String, String> {
 // ---------------- 几何与位置记忆 ----------------
 
 const SNAP_ENGAGE_LOGICAL: f64 = 12.0;
+
+// ---------------- 吸附预览层 ----------------
+//
+// 拖动过程零干预：接近对齐位时仅显示虚线预览框，
+// 松开鼠标左键后一次性落位到预览位置。
+
+/// 预览悬浮窗在 setup 中预创建，此处只做复用
+fn preview_show(app: &AppHandle, x: i32, y: i32, w: i32, h: i32) {
+    if let Some(win) = app.get_webview_window("snap-preview") {
+        let _ = win.set_size(tauri::PhysicalSize::new(w.max(8) as u32, h.max(8) as u32));
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+        let _ = win.show();
+    }
+}
+
+fn preview_hide(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("snap-preview") {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+        }
+    }
+}
+
+/// 提交松手时的待定吸附/尺寸目标
+fn commit_pending_drags(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let now = Instant::now();
+    let snaps: Vec<(String, (i32, i32))> = {
+        let mut p = state.pending_snap.lock().unwrap();
+        let keys: Vec<String> = p.keys().cloned().collect();
+        let mut out = Vec::new();
+        for k in keys {
+            if let Some(s) = p.remove(&k) {
+                // 过期目标（拖动早已结束）不提交
+                if now.duration_since(s.at) < Duration::from_millis(1500) {
+                    out.push((k, (s.x, s.y)));
+                }
+            }
+        }
+        out
+    };
+    for (label, (x, y)) in snaps {
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.set_position(PhysicalPosition::new(x, y));
+        }
+    }
+    preview_hide(app);
+}
+
+/// 全局监听鼠标左键释放，触发吸附落位（懒启动、常驻轮询，开销可忽略）
+#[cfg(target_os = "windows")]
+fn start_release_watcher(app: &AppHandle) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    if app.state::<AppState>().watcher_started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        const VK_LBUTTON: i32 = 0x01;
+        let mut was_down =
+            unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 };
+        loop {
+            std::thread::sleep(Duration::from_millis(18));
+            let down = unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 };
+            if was_down && !down {
+                commit_pending_drags(&app);
+            }
+            was_down = down;
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_release_watcher(_app: &AppHandle) {}
 
 /// 将逻辑尺寸量化到步进的整数倍，便于组件窗口对齐拼接
 fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
@@ -1044,6 +1123,31 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     rebuild_tray_menu(app.handle(), &[])?;
 
+    // 吸附预览层：透明点击穿透悬浮窗，事件循环启动前创建避免死锁
+    {
+        let preview = WebviewWindowBuilder::new(
+            app.handle(),
+            "snap-preview",
+            WebviewUrl::App("index.html".into()),
+        )
+        .title("snap-preview")
+        .inner_size(120.0, 80.0)
+        .decorations(false)
+        .transparent(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        .visible(false)
+        .always_on_top(true)
+        .focused(false)
+        .build();
+        if let Ok(pw) = preview {
+            let _ = pw.set_ignore_cursor_events(true);
+            #[cfg(target_os = "windows")]
+            round_window_corners(&pw);
+        }
+    }
+
     // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）
     for ow in settings.open_windows.clone() {
         if !valid_widget_id(&ow.id) {
@@ -1137,46 +1241,43 @@ pub fn run() {
                 if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
                     let state = app.state::<AppState>();
-                    let mut latest = state.latest_pos.lock().unwrap();
-                    let mut locks = state.snap_locks.lock().unwrap();
+                    state
+                        .latest_pos
+                        .lock()
+                        .unwrap()
+                        .insert(label.clone(), (cx, cy));
+                    start_release_watcher(app);
 
-                    // 调节大小时禁用吸附：尺寸调节常伴随 Moved 事件，此时不参与位置吸附
+                    // 调节尺寸期间不做位置吸附预览
                     let resizing_active = {
                         let pend = state.resize_pending.lock().unwrap();
                         matches!(
                             pend.get(&label),
-                            Some(p) if p.at.elapsed() <= Duration::from_millis(220)
+                            Some(p) if p.at.elapsed() <= Duration::from_millis(250)
                         )
                     };
 
-                    let final_pos = if resizing_active {
-                        locks.remove(&label);
-                        (cx, cy)
-                    } else {
-                        // 每次移动都重新评估吸附：
-                        // · 感应区内无目标 → 解锁，完全跟手
-                        // · 有目标且与锁定相同（含已落在目标上）→ 跟手不拉扯
-                        // · 有目标但不同于锁定 → 立即跳到新目标
-                        let ((sx, sy), engaged) = snap_position(&win, app, cx, cy);
-                        if !engaged {
-                            locks.remove(&label);
-                            (cx, cy)
-                        } else {
-                            let same_as_lock =
-                                matches!(locks.get(&label), Some(o) if *o == (sx, sy));
-                            locks.insert(label.clone(), (sx, sy));
-                            if same_as_lock || (sx, sy) == (cx, cy) {
-                                (cx, cy)
-                            } else {
-                                (sx, sy)
-                            }
+                    // 预览式吸附：拖动过程零干预，接近对齐位时只显示预览框，
+                    // 松开鼠标左键后由监听线程统一落位
+                    let ((tx, ty), engaged) = snap_position(&win, app, cx, cy);
+                    if !resizing_active && engaged && ((tx, ty) != (cx, cy)) {
+                        state.pending_snap.lock().unwrap().insert(
+                            label.clone(),
+                            PendingSnap { x: tx, y: ty, at: Instant::now() },
+                        );
+                        if let Ok(sz) = win.outer_size() {
+                            preview_show(
+                                app,
+                                tx,
+                                ty,
+                                sz.width as i32,
+                                sz.height as i32,
+                            );
                         }
-                    };
-                    if final_pos.0 != pos.x || final_pos.1 != pos.y {
-                        let _ =
-                            win.set_position(PhysicalPosition::new(final_pos.0, final_pos.1));
+                    } else {
+                        state.pending_snap.lock().unwrap().remove(&label);
+                        preview_hide(app);
                     }
-                    latest.insert(label.clone(), final_pos);
                 }
                 schedule_save(app);
             }

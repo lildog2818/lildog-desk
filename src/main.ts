@@ -19,6 +19,12 @@ async function route(): Promise<void> {
   const label = getCurrentWindow().label;
   app.innerHTML = "";
 
+  // 吸附预览层：仅渲染一个虚线框
+  if (label === "snap-preview") {
+    app.innerHTML = '<div id="snap-preview-box"></div>';
+    return;
+  }
+
   if (!label.startsWith("w-")) {
     await renderDashboard(app);
     return;

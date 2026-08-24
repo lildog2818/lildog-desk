@@ -818,3 +818,13 @@ body.collapsed #pill {
 #toast.show {
   opacity: 1;
 }
+
+/* ---- 吸附预览层 ---- */
+#snap-preview-box {
+  position: fixed;
+  inset: 0;
+  border: 1.5px dashed rgba(255, 184, 77, 0.9);
+  background: rgba(255, 184, 77, 0.1);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(255, 184, 77, 0.25);
+}
