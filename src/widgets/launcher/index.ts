@@ -79,6 +79,21 @@ function buildDom(root: HTMLElement): LauncherEls {
 let els: LauncherEls | null = null;
 let winPinned = false;
 
+/**
+ * 统一的收起 / 展开入口：先切换外观，再同步窗口尺寸。
+ * 后端失败时回滚外观并 toast 提示，避免"点了没反应"的静默失败。
+ */
+async function applyCollapse(next: boolean): Promise<void> {
+  if (!els) return;
+  document.body.classList.toggle("collapsed", next);
+  try {
+    await setCollapsed(next);
+  } catch (e) {
+    document.body.classList.toggle("collapsed", !next);
+    toast(String(e));
+  }
+}
+
 function refreshPinVisual(): void {
   if (!els) return;
   els.btnPin.classList.toggle("active", winPinned);
@@ -377,8 +392,7 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
   };
 
   e.btnCollapse.onclick = () => {
-    document.body.classList.add("collapsed");
-    void setCollapsed(true);
+    void applyCollapse(true);
   };
 
   let pillPress: { x: number; y: number } | null = null;
@@ -400,8 +414,7 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
       window.removeEventListener("pointermove", move);
       if (!pillPress) return;
       pillPress = null;
-      document.body.classList.remove("collapsed");
-      void setCollapsed(false);
+      void applyCollapse(false);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish, { once: true });
@@ -417,8 +430,7 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
   e.header.addEventListener("dblclick", (ev) => {
     const t = ev.target as HTMLElement;
     if (t.closest("button,input,#search-wrap")) return;
-    const collapsed = document.body.classList.toggle("collapsed");
-    void setCollapsed(collapsed);
+    void applyCollapse(!document.body.classList.contains("collapsed"));
   });
 
   const unlistenDragDrop = await getCurrentWebview().onDragDropEvent((ev) => {

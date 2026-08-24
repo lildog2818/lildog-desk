@@ -1,0 +1,160 @@
+/* ---- 剪贴板历史小组件（cb- 前缀避免跨窗口样式串扰） ---- */
+
+.cb-body {
+  padding: 8px 10px 6px;
+  gap: 0;
+}
+
+.cb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-bottom: 6px;
+}
+
+.cb-tabs {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.cb-tab {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.cb-tab:hover {
+  background: var(--hover);
+}
+
+.cb-tab.on {
+  background: rgba(96, 165, 250, 0.18);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: var(--text);
+}
+
+.cb-search {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 13px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.cb-search:focus {
+  border-color: rgba(96, 165, 250, 0.5);
+}
+
+.cb-search::placeholder {
+  color: var(--text-dim);
+}
+
+/* ---- 列表 ---- */
+
+.cb-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 2px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.cb-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.cb-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  min-height: 42px;
+  flex-shrink: 0;
+}
+
+.cb-row:hover {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.11),
+    rgba(255, 255, 255, 0.04)
+  );
+  border-color: var(--stroke);
+}
+
+.cb-row-icon {
+  width: 36px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(96, 165, 250, 0.14);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  font-size: 14px;
+  overflow: hidden;
+}
+
+.cb-row-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cb-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-preview {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-sub {
+  margin-top: 1px;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-time {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: right;
+  line-height: 1.3;
+}
+
+.cb-pin-flag {
+  font-size: 10px;
+}

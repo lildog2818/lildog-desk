@@ -1,3 +1,4 @@
+mod clipboard;
 mod icons;
 mod links;
 mod storage;
@@ -70,6 +71,10 @@ struct AppState {
     watcher_started: AtomicBool,
     /// 去抖中的尺寸调节：label -> 会话
     resize_pending: Mutex<HashMap<String, ResizeSession>>,
+    /// 程序化尺寸变更守卫：label -> 守卫截止时刻。
+    /// 折叠/展开等由命令发起的 set_size 期间，Moved/Resized 不做吸附与阶梯预览，
+    /// 避免预提交机制把窗口又拉回原位（表现为"折叠没反应/乱跳"）。
+    programmatic_until: Mutex<HashMap<String, Instant>>,
     glass_value: Mutex<f64>,
     size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
@@ -194,22 +199,38 @@ async fn set_collapsed(
     let label = win.label().to_string();
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
+    // 程序化改尺寸前，清掉该窗口可能残留的吸附 / 阶梯预提交目标，
+    // 防止随后任意一次鼠标释放被 watcher 提交、把窗口拉回旧位。
+    {
+        let state = app.state::<AppState>();
+        state.pending_snap.lock().unwrap().remove(&label);
+        state.pending_resize.lock().unwrap().remove(&label);
+        arm_programmatic_resize(&state, &label);
+    }
+    let already_collapsed;
     {
         let st = s.windows.entry(label.clone()).or_default();
+        already_collapsed = st.collapsed;
         if collapsed {
-            if let Ok(size) = win.inner_size() {
-                let scale = win.scale_factor().unwrap_or(1.0);
-                st.width = Some(size.width as f64 / scale);
-                st.height = Some(size.height as f64 / scale);
+            // 已处于折叠态时不得把 72px 存为"展开尺寸"，否则展开永远恢复成小条
+            if !already_collapsed {
+                if let Ok(size) = win.inner_size() {
+                    let scale = win.scale_factor().unwrap_or(1.0);
+                    st.width = Some(size.width as f64 / scale);
+                    st.height = Some(size.height as f64 / scale);
+                }
             }
-            win.set_size(LogicalSize::new(st.width.unwrap_or(340.0), 72.0))
+            win.set_size(LogicalSize::new(st.width.unwrap_or(340.0), COLLAPSED_LOGICAL_H))
                 .map_err(|e| e.to_string())?;
         } else {
-            win.set_size(LogicalSize::new(
-                st.width.unwrap_or(340.0),
-                st.height.unwrap_or(560.0),
-            ))
-            .map_err(|e| e.to_string())?;
+            // 历史版本可能把折叠高度误存为展开高度（缺陷修复前的脏数据），
+            // 恢复时低于折叠高度的记录视为无效，回退到默认展开高度
+            let restore_h = match st.height {
+                Some(h) if h > COLLAPSED_LOGICAL_H => h,
+                _ => 560.0,
+            };
+            win.set_size(LogicalSize::new(st.width.unwrap_or(340.0), restore_h))
+                .map_err(|e| e.to_string())?;
         }
         st.collapsed = collapsed;
     }
@@ -323,8 +344,13 @@ fn ensure_widget_window(
     let st = settings.window(&label);
     let glass = settings.global_glass();
     let step = *app.state::<AppState>().size_step.lock().unwrap();
+    // 折叠态的窗口按 pill 高度还原，与前端 body.collapsed 外观保持一致
     let w = quantize_logical(st.width.unwrap_or(width).max(160.0), step, 160.0);
-    let h = quantize_logical(st.height.unwrap_or(height).max(96.0), step, 96.0);
+    let h = if st.collapsed {
+        COLLAPSED_LOGICAL_H
+    } else {
+        quantize_logical(st.height.unwrap_or(height).max(96.0), step, 96.0)
+    };
 
     let win = WebviewWindowBuilder::new(
         app,
@@ -572,6 +598,28 @@ fn resolve_opencode_key() -> Result<String, String> {
 // ---------------- 几何与位置记忆 ----------------
 
 const SNAP_ENGAGE_LOGICAL: f64 = 12.0;
+
+/// 折叠态（pill）的逻辑高度，与前端 CSS / min_inner_size 保持一致
+const COLLAPSED_LOGICAL_H: f64 = 72.0;
+/// 程序化尺寸变更的守卫时长：覆盖 set_size 引发的一串 Moved/Resized 事件
+const PROGRAMMATIC_GUARD_MS: u64 = 400;
+
+fn arm_programmatic_resize(state: &AppState, label: &str) {
+    state
+        .programmatic_until
+        .lock()
+        .unwrap()
+        .insert(label.to_string(), Instant::now() + Duration::from_millis(PROGRAMMATIC_GUARD_MS));
+}
+
+fn is_programmatic_resize(state: &AppState, label: &str) -> bool {
+    state
+        .programmatic_until
+        .lock()
+        .unwrap()
+        .get(label)
+        .map_or(false, |t| Instant::now() < *t)
+}
 
 // ---------------- 吸附预览层 ----------------
 //
@@ -1314,6 +1362,10 @@ pub fn run() {
             get_icon,
             open_target,
             reveal_target,
+            clipboard::read_clipboard_state,
+            clipboard::write_clipboard_text,
+            clipboard::write_clipboard_files,
+            clipboard::delete_clipboard_image,
             get_autostart,
             set_autostart
         ])
@@ -1346,10 +1398,12 @@ pub fn run() {
                     };
                     // 固定（置顶）的窗口自动解除吸附
                     let pinned = state.pinned_set.lock().unwrap().contains(&label);
+                    // 程序化改尺寸（折叠/展开）期间同样跳过吸附评估
+                    let programmatic = is_programmatic_resize(&state, &label);
 
                     // 预览式吸附：拖动过程零干预，接近对齐位时只显示预览框，
                     // 松开鼠标左键后由监听线程统一落位
-                    if pinned || resizing_active {
+                    if pinned || resizing_active || programmatic {
                         state.pending_snap.lock().unwrap().remove(&label);
                         hide_preview_if_idle(app);
                     } else {
@@ -1399,9 +1453,11 @@ pub fn run() {
                         .unwrap()
                         .insert(label.clone(), (lw, lh));
 
+                    let state = app.state::<AppState>();
+                    // 程序化改尺寸（折叠/展开）不参与阶梯吸附，只记录尺寸
+                    if !is_programmatic_resize(&state, &label) {
                     // 预览式尺寸阶梯：拖动过程零干预，实时显示量化目标预览框，
                     // 松开鼠标左键后由监听线程一次性落位
-                    let state = app.state::<AppState>();
                     let step = *state.size_step.lock().unwrap();
                     // 记录本次调节手势的起点位置（用于判断拖动的是哪条边）
                     let start_pos = {
@@ -1478,6 +1534,7 @@ pub fn run() {
                                 hide_preview_if_idle(app);
                             }
                         }
+                    }
                     }
                 }
                 schedule_save(app);
