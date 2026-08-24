@@ -25,6 +25,17 @@ struct TrayEntry {
     height: f64,
 }
 
+/// 一次进行中的尺寸调节会话
+#[derive(Clone)]
+struct ResizeSession {
+    lw: f64,
+    lh: f64,
+    gen: u64,
+    at: Instant,
+    /// 本次调节开始时的物理位置：与结束时比较可判断用户拖的是哪条边
+    start_pos: Option<(i32, i32)>,
+}
+
 #[derive(Default)]
 struct AppState {
     last_save: Mutex<Option<Instant>>,
@@ -33,8 +44,8 @@ struct AppState {
     /// 已触发吸附并处于锁定态的窗口：label -> 吸附落点。
     /// 锁定期间若目标不变则完全跟手，目标变化或消失时立即更新/解锁。
     snap_locks: Mutex<HashMap<String, (i32, i32)>>,
-    /// 去抖中的尺寸调节：label -> (逻辑宽, 逻辑高, 代数, 最近时间)
-    resize_pending: Mutex<HashMap<String, (f64, f64, u64, Instant)>>,
+    /// 去抖中的尺寸调节：label -> 会话
+    resize_pending: Mutex<HashMap<String, ResizeSession>>,
     glass_value: Mutex<f64>,
     size_step: Mutex<u32>,
     tray_items: Mutex<Vec<TrayEntry>>,
@@ -1161,50 +1172,87 @@ pub fn run() {
                         .unwrap()
                         .insert(label.clone(), (lw, lh));
 
-                    // 尺寸阶梯去抖：拖动过程不干预窗口，停止约 150ms 后一次性吸附到步进，
+                    // 尺寸阶梯去抖：拖动过程不干预窗口，停止约 160ms 后一次性吸附到步进，
                     // 避免拖拽中反复 set_size 造成的抖动
                     let state = app.state::<AppState>();
                     let step = *state.size_step.lock().unwrap();
-                    let gen = {
+                    let (gen, start_pos) = {
                         let mut pend = state.resize_pending.lock().unwrap();
-                        let e = pend
-                            .entry(label.clone())
-                            .or_insert((lw, lh, 0, Instant::now()));
-                        e.0 = lw;
-                        e.1 = lh;
-                        e.2 += 1;
-                        e.3 = Instant::now();
-                        e.2
+                        let entry = pend.entry(label.clone()).or_insert_with(|| {
+                            ResizeSession {
+                                lw,
+                                lh,
+                                gen: 0,
+                                at: Instant::now(),
+                                start_pos: window
+                                    .outer_position()
+                                    .map(|p| (p.x, p.y))
+                                    .ok(),
+                            }
+                        });
+                        entry.lw = lw;
+                        entry.lh = lh;
+                        entry.at = Instant::now();
+                        entry.gen += 1;
+                        (entry.gen, entry.start_pos)
                     };
                     let app2 = app.clone();
                     let label2 = label.clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(150));
+                        std::thread::sleep(Duration::from_millis(160));
                         let st = app2.state::<AppState>();
                         let fresh = {
                             let pend = st.resize_pending.lock().unwrap();
                             matches!(
                                 pend.get(&label2),
-                                Some(p) if p.2 == gen
-                                    && p.3.elapsed() >= Duration::from_millis(140)
+                                Some(p) if p.gen == gen
+                                    && p.at.elapsed() >= Duration::from_millis(150)
                             )
                         };
                         if !fresh {
                             return;
                         }
                         st.resize_pending.lock().unwrap().remove(&label2);
-                        if let Some(win) = app2.get_webview_window(&label2) {
-                            let Ok(cur) = win.inner_size() else {
-                                return;
-                            };
-                            let cscale = win.scale_factor().unwrap_or(1.0);
-                            let cw = cur.width as f64 / cscale;
-                            let ch = cur.height as f64 / cscale;
-                            let qw = quantize_logical(cw, step, 160.0);
-                            let qh = quantize_logical(ch, step, 96.0);
-                            if (qw - cw).abs() > 0.6 || (qh - ch).abs() > 0.6 {
-                                let _ = win.set_size(LogicalSize::new(qw, qh));
+                        let Some(win) = app2.get_webview_window(&label2) else {
+                            return;
+                        };
+                        let Ok(cur_phys) = win.outer_size() else {
+                            return;
+                        };
+                        let Ok(pos_phys) = win.outer_position() else {
+                            return;
+                        };
+                        let cscale = win.scale_factor().unwrap_or(1.0);
+                        let cw = cur_phys.width as f64 / cscale;
+                        let ch = cur_phys.height as f64 / cscale;
+                        let qw = quantize_logical(cw, step, 160.0);
+                        let qh = quantize_logical(ch, step, 96.0);
+                        let dw = ((qw - cw) * cscale).round() as i32;
+                        let dh = ((qh - ch) * cscale).round() as i32;
+                        if dw == 0 && dh == 0 {
+                            return;
+                        }
+
+                        // 锚定未拖动的边：调节期间位置发生变化的轴说明拖的是左/上边，
+                        // 量化后保持右/下边不动；位置未变的轴默认锚定左上，无需补偿。
+                        let new_w = (cur_phys.width as i32 + dw).max(1);
+                        let new_h = (cur_phys.height as i32 + dh).max(1);
+                        let mut np = pos_phys;
+                        if let Some((sx, sy)) = start_pos {
+                            if pos_phys.x != sx {
+                                np.x = pos_phys.x + cur_phys.width as i32 - new_w;
                             }
+                            if pos_phys.y != sy {
+                                np.y = pos_phys.y + cur_phys.height as i32 - new_h;
+                            }
+                        }
+                        let _ = win.set_size(tauri::PhysicalSize::new(
+                            new_w as u32,
+                            new_h as u32,
+                        ));
+                        if np != pos_phys {
+                            let _ =
+                                win.set_position(PhysicalPosition::new(np.x, np.y));
                         }
                     });
                 }
