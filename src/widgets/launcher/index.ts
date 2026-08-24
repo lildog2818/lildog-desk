@@ -413,6 +413,14 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
     void getCurrentWindow().startDragging();
   });
 
+  // 双击标题栏空白处快速收起 / 展开
+  e.header.addEventListener("dblclick", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (t.closest("button,input,#search-wrap")) return;
+    const collapsed = document.body.classList.toggle("collapsed");
+    void setCollapsed(collapsed);
+  });
+
   const unlistenDragDrop = await getCurrentWebview().onDragDropEvent((ev) => {
     const payload = ev.payload as DropPayload;
     if (payload.type === "enter" || payload.type === "over") {

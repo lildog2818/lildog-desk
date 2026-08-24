@@ -164,6 +164,7 @@ const THEME_FALLBACK: Required<ThemeCfg> = {
 function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
   const box = document.createElement("div");
   box.className = "theme-box";
+  const paints: Array<() => void> = [];
 
   const mkRow = (labelText: string, key: keyof ThemeCfg): void => {
     const head = document.createElement("div");
@@ -194,11 +195,25 @@ function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
       grid.appendChild(s);
     }
     paint();
+    paints.push(paint);
     box.append(head, grid);
   };
 
   mkRow("字体颜色", "fontColor");
   mkRow("背景颜色", "bgColor");
+
+  const reset = document.createElement("button");
+  reset.className = "theme-reset";
+  reset.textContent = "恢复默认配色";
+  reset.onclick = () => {
+    initial.fontColor = THEME_FALLBACK.fontColor;
+    initial.bgColor = THEME_FALLBACK.bgColor;
+    paints.forEach((p) => p());
+    applyTheme({});
+    void setTheme({}).catch((e) => toast(String(e)));
+  };
+  box.appendChild(reset);
+
   return box;
 }
 
