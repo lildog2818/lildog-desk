@@ -598,46 +598,40 @@ fn snap_position(
         // 「接近」而非严格重叠：垂直/水平范围相差不超过阈值即可参与对齐
         let v_near = t < ob + th && b > ot - th;
         if v_near {
-            if (l - or_).abs() <= th {
+            // 水平方向所有对齐方式独立评估，取距离最近者（支持多侧）
+            let cands = [
+                (or_, (l - or_).abs()),         // 我左缘 ↔ 对方右缘拼接
+                (ol - w, (r - ol).abs()),       // 我右缘 ↔ 对方左缘拼接
+                (ol, (l - ol).abs()),           // 左缘与对方左缘对齐
+                (or_ - w, (r - or_).abs()),     // 右缘与对方右缘对齐
+            ];
+            if let Some(&(_, nl)) = cands
+                .iter()
+                .filter(|(_, d)| *d <= th)
+                .min_by_key(|(_, d)| *d)
+            {
                 engaged = true;
-                l = or_;
+                l = nl;
                 r = l + w;
-            } else if (r - ol).abs() <= th {
-                engaged = true;
-                l = ol - w;
-                r = ol;
-            } else if (l - ol).abs() <= th {
-                // 允许重叠：左边缘与对方左边缘对齐
-                engaged = true;
-                l = ol;
-                r = l + w;
-            } else if (r - or_).abs() <= th {
-                // 右边缘对齐
-                engaged = true;
-                r = or_;
-                l = r - w;
             }
         }
         let h_near = l < or_ + th && r > ol - th;
         if h_near {
-            if (t - ob).abs() <= th {
+            // 垂直方向同样独立评估，取最近者
+            let cands = [
+                (ob, (t - ob).abs()),           // 我上缘 ↔ 对方下缘拼接
+                (ot - h, (b - ot).abs()),       // 我下缘 ↔ 对方上缘拼接
+                (ot, (t - ot).abs()),           // 上缘对齐
+                (ob - h, (b - ob).abs()),       // 下缘对齐
+            ];
+            if let Some((_, nt)) = cands
+                .iter()
+                .filter(|(_, d)| *d <= th)
+                .min_by_key(|(_, d)| *d)
+            {
                 engaged = true;
-                t = ob;
+                t = *nt;
                 b = t + h;
-            } else if (b - ot).abs() <= th {
-                engaged = true;
-                t = ot - h;
-                b = ot;
-            } else if (t - ot).abs() <= th {
-                // 允许重叠：上边缘对齐
-                engaged = true;
-                t = ot;
-                b = t + h;
-            } else if (b - ob).abs() <= th {
-                // 下边缘对齐
-                engaged = true;
-                b = ob;
-                t = b - h;
             }
         }
     }
@@ -655,26 +649,34 @@ fn snap_position(
             // 「接近」而非严格重叠，与窗口间对齐保持一致
             let v_near = t < mb + th && b > mt - th;
             if v_near {
-                if (l - ml).abs() <= th {
+                let cands = [
+                    (ml, (l - ml).abs()),
+                    (mr - w, (r - mr).abs()),
+                ];
+                if let Some(&(_, nl)) = cands
+                    .iter()
+                    .filter(|(_, d)| *d <= th)
+                    .min_by_key(|(_, d)| *d)
+                {
                     engaged = true;
-                    l = ml;
-                    r = l + w;
-                } else if (r - mr).abs() <= th {
-                    engaged = true;
-                    l = mr - w;
-                    r = mr;
+                    l = nl;
+                    r = nl + w;
                 }
             }
             let h_near = l < mr + th && r > ml - th;
             if h_near {
-                if (t - mt).abs() <= th {
+                let cands = [
+                    (mt, (t - mt).abs()),
+                    (mb - h, (b - mb).abs()),
+                ];
+                if let Some(&(_, nt)) = cands
+                    .iter()
+                    .filter(|(_, d)| *d <= th)
+                    .min_by_key(|(_, d)| *d)
+                {
                     engaged = true;
-                    t = mt;
-                    b = t + h;
-                } else if (b - mb).abs() <= th {
-                    engaged = true;
-                    t = mb - h;
-                    b = mb;
+                    t = nt;
+                    b = nt + h;
                 }
             }
         }
