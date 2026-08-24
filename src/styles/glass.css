@@ -812,3 +812,10 @@ body.collapsed #pill {
   border-radius: 10px;
   box-shadow: inset 0 0 0 1px rgba(255, 184, 77, 0.25);
 }
+
+/* 大小预览模式：绿色实线，与吸附对齐预览区分 */
+html[data-pv="size"] #snap-preview-box {
+  border: 1.5px solid rgba(110, 231, 183, 0.95);
+  background: rgba(110, 231, 183, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(110, 231, 183, 0.25);
+}

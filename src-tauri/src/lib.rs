@@ -575,14 +575,36 @@ const SNAP_ENGAGE_LOGICAL: f64 = 12.0;
 
 // ---------------- 吸附预览层 ----------------
 //
-// 拖动过程零干预：接近对齐位时仅显示虚线预览框，
-// 松开鼠标左键后一次性落位到预览位置。
+/// 预览类型：snap=对齐吸附预览（橙色虚线）；size=阶梯尺寸预览（绿色实线）
+#[derive(Clone, Copy, PartialEq)]
+enum PreviewMode {
+    Snap,
+    Size,
+}
+
+/// 拖动过程零干预：接近目标时仅显示预览框，
+/// 松开鼠标左键后一次性落位。
 
 /// 预览悬浮窗在 setup 中预创建，此处只做复用
-fn preview_show(app: &AppHandle, x: i32, y: i32, w: i32, h: i32) {
+fn preview_show(
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    mode: PreviewMode,
+) {
     if let Some(win) = app.get_webview_window("snap-preview") {
         let _ = win.set_size(tauri::PhysicalSize::new(w.max(8) as u32, h.max(8) as u32));
         let _ = win.set_position(PhysicalPosition::new(x, y));
+        let tag = match mode {
+            PreviewMode::Snap => "snap",
+            PreviewMode::Size => "size",
+        };
+        let _ = win.eval(&format!(
+            "document.documentElement.dataset.pv='{}'",
+            tag
+        ));
         let _ = win.show();
     }
 }
@@ -716,9 +738,12 @@ fn snap_position(
     let mut b = y + h;
     let mut engaged = false;
 
-    // 与其他可见窗口吸附
+    // 仅与其他小组件窗口对齐（不吸附桌面/屏幕边缘）
     for (label, other) in app.webview_windows() {
-        if label == win.label() || !other.is_visible().unwrap_or(false) {
+        if label == win.label()
+            || label == "snap-preview"
+            || !other.is_visible().unwrap_or(false)
+        {
             continue;
         }
         let (Ok(op), Ok(os)) = (other.outer_position(), other.outer_size()) else {
@@ -1346,6 +1371,7 @@ pub fn run() {
                                     ty,
                                     sz.width as i32,
                                     sz.height as i32,
+                                    PreviewMode::Snap,
                                 );
                             }
                         } else {
@@ -1429,7 +1455,7 @@ pub fn run() {
                                         py = pos.y + cur.height as i32 - new_h;
                                     }
                                 }
-                                // 不显示预览框，松手后静默落位到阶梯尺寸
+                                // 显示大小预览框（绿色实线）；吸附预览框不参与
                                 state.pending_resize.lock().unwrap().insert(
                                     label.clone(),
                                     PendingResize {
@@ -1439,6 +1465,14 @@ pub fn run() {
                                         y: py,
                                         at: Instant::now(),
                                     },
+                                );
+                                preview_show(
+                                    app,
+                                    px,
+                                    py,
+                                    new_w,
+                                    new_h,
+                                    PreviewMode::Size,
                                 );
                             } else {
                                 state.pending_resize.lock().unwrap().remove(&label);
