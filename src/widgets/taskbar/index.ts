@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { registerWidget, type WidgetContext } from "../../platform/registry";
 import { toast } from "../../platform/shell";
-import { closeWidgetWindow } from "../../platform/winstate";
+import { closeWidgetWindow, setPinned, getWindowState } from "../../platform/winstate";
 import { widgetLoad, widgetSave } from "../../platform/widget-data";
 import { FALLBACK } from "../launcher/actions";
 
@@ -59,11 +59,13 @@ interface TbEls {
   tasks: HTMLElement;
   net: HTMLButtonElement;
   vol: HTMLButtonElement;
+  desktop: HTMLElement;
   time: HTMLElement;
   date: HTMLElement;
 }
 let els: TbEls | null = null;
 let unlistenFns: Array<() => void> = [];
+let winPinned = false;
 
 let saveTimer = 0;
 let clockTimer = 0;
@@ -127,7 +129,14 @@ function adjustVolume(delta: number): void {
 
 function showNativeMenu(
   kind: "pin" | "task" | "bar",
-  opts: { id?: string; title?: string; hwnd?: number; cx?: number; cy?: number } = {},
+  opts: {
+    id?: string;
+    title?: string;
+    hwnd?: number;
+    cx?: number;
+    cy?: number;
+    pinned?: boolean;
+  } = {},
 ): void {
   void invoke("show_tb_menu", {
     kind,
@@ -136,6 +145,7 @@ function showNativeMenu(
     hwnd: opts.hwnd ?? 0,
     cx: opts.cx ?? 0,
     cy: opts.cy ?? 0,
+    pinned: opts.pinned ?? false,
   }).catch((e) => toast(String(e)));
 }
 
@@ -171,6 +181,14 @@ function handleMenuId(raw: string): void {
     void invoke("open_taskbar_panel", { mode: "picker" }).catch((e) =>
       toast(String(e)),
     );
+  } else if (raw === "tb-bar-pin-top") {
+    winPinned = !winPinned;
+    void setPinned(winPinned)
+      .then(() => toast(winPinned ? "已置顶" : "已取消置顶"))
+      .catch((e) => {
+        winPinned = !winPinned;
+        toast(String(e));
+      });
   } else if (raw === "tb-bar-close") {
     void closeWidgetWindow("taskbar").catch((e) => toast(String(e)));
   }
@@ -343,6 +361,13 @@ function makeTaskButton(t: TaskWindowInfo): HTMLButtonElement {
       .then(refreshSoon)
       .catch((e) => toast(String(e)));
   };
+  // 中键关闭窗口（Windows 任务栏惯例）
+  b.onauxclick = (ev) => {
+    if (ev.button !== 1) return;
+    void invoke("close_task_window", { hwnd })
+      .then(refreshSoon)
+      .catch((e) => toast(String(e)));
+  };
   b.oncontextmenu = (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
@@ -421,6 +446,7 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
           <div id="tb-time">--:--</div>
           <div id="tb-date"></div>
         </div>
+        <div id="tb-desktop" title="显示桌面"></div>
       </div>
     </div>
   `;
@@ -431,6 +457,7 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     tasks: root.querySelector<HTMLElement>("#tb-tasks")!,
     net: root.querySelector<HTMLButtonElement>("#tb-net")!,
     vol: root.querySelector<HTMLButtonElement>("#tb-vol")!,
+    desktop: root.querySelector<HTMLElement>("#tb-desktop")!,
     time: root.querySelector<HTMLElement>("#tb-time")!,
     date: root.querySelector<HTMLElement>("#tb-date")!,
   };
@@ -448,7 +475,7 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     const t = ev.target as HTMLElement;
     if (t.closest(".tb-pin,.tb-task")) return;
     ev.preventDefault();
-    showNativeMenu("bar", { cx: ev.clientX, cy: ev.clientY });
+    showNativeMenu("bar", { cx: ev.clientX, cy: ev.clientY, pinned: winPinned });
   });
 
   // 网络图标：点击弹出快捷设置面板；状态随轮询低频刷新
@@ -456,6 +483,14 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
     void invoke("open_taskbar_panel", { mode: "settings" }).catch((e) =>
       toast(String(e)),
     );
+  });
+
+  // 显示桌面：最小化所有列出的窗口（再点任务图标可逐个还原）
+  els.desktop.addEventListener("click", () => {
+    for (const t of tasks) {
+      void invoke("minimize_task_window", { hwnd: t.hwnd }).catch(() => {});
+    }
+    refreshSoon();
   });
 
   // 音量图标：点击弹出快捷设置面板（滑条调节），滚轮快速增减
@@ -492,6 +527,11 @@ async function mountTaskbar(root: HTMLElement): Promise<() => void> {
   tickClock();
   void loadAudioState();
   void loadNetwork();
+  void getWindowState()
+    .then((st) => {
+      winPinned = st.pinned;
+    })
+    .catch(() => {});
   await refreshTasks();
 
   let netTick = 0;

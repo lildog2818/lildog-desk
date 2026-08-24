@@ -285,6 +285,7 @@ pub async fn show_tb_menu(
     hwnd: isize,
     cx: f64,
     _cy: f64,
+    pinned: bool,
 ) -> Result<(), String> {
     use tauri::menu::{ContextMenu, IsMenuItem, Menu, MenuItem};
     use tauri::{PhysicalPosition, Position};
@@ -306,6 +307,10 @@ pub async fn show_tb_menu(
         ],
         _ => vec![
             mk("tb-bar-addpin".into(), "固定应用到任务栏…")?,
+            mk(
+                "tb-bar-pin-top".into(),
+                if pinned { "取消置顶" } else { "钉住置顶" },
+            )?,
             mk("tb-bar-close".into(), "关闭任务栏")?,
         ],
     };
