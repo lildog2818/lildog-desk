@@ -137,7 +137,17 @@ function activeGroupId(): string {
   return state.data.groups[0]?.id ?? "";
 }
 
-export function openAppPicker(): void {
+/**
+ * 通用「从开始菜单选应用」选择器：isAdded 决定已添加置灰态，
+ * onPick 在用户选中某个应用时回调；browse 提供时才显示"浏览文件…"按钮。
+ * 任务栏等外部组件复用此入口，不必触碰 launcher 的 store。
+ */
+export function showAppPicker(opts: {
+  isAdded: (target: string) => boolean;
+  onPick: (a: AppEntry) => void;
+  browse?: () => void;
+}): void {
+  const { isAdded, onPick, browse } = opts;
   closeOverlays();
   const overlay = document.createElement("div");
   overlay.className = "overlay";
@@ -154,13 +164,15 @@ export function openAppPicker(): void {
   status.textContent = "正在读取应用列表…";
   const bar = document.createElement("div");
   bar.className = "dialog-btns";
-  bar.append(
-    button("浏览文件…", "", () => {
-      closeOverlays();
-      void addApp(activeGroupId());
-    }),
-    button("关闭", "", () => closeOverlays()),
-  );
+  if (browse) {
+    bar.append(
+      button("浏览文件…", "", () => {
+        closeOverlays();
+        browse();
+      }),
+    );
+  }
+  bar.append(button("关闭", "", () => closeOverlays()));
 
   box.append(h, searchInput, list, status, bar);
   overlay.appendChild(box);
@@ -211,10 +223,6 @@ export function openAppPicker(): void {
     });
     pumpIcons();
   };
-  const isAdded = (target: string): boolean =>
-    state.data.items.some(
-      (i) => i.target.toLowerCase() === target.toLowerCase(),
-    );
 
   let apps: AppEntry[] = appListCache ?? [];
   const renderList = (): void => {
@@ -248,7 +256,7 @@ export function openAppPicker(): void {
           toast("该项已存在");
           return;
         }
-        void importPaths([a.target], activeGroupId());
+        onPick(a);
       };
       ensureIcon(a, row);
       frag.appendChild(row);
@@ -276,6 +284,18 @@ export function openAppPicker(): void {
   } else {
     renderList();
   }
+}
+
+/** launcher 自己的选择器入口：写入当前激活分组 */
+export function openAppPicker(): void {
+  showAppPicker({
+    isAdded: (target) =>
+      state.data.items.some(
+        (i) => i.target.toLowerCase() === target.toLowerCase(),
+      ),
+    onPick: (a) => void importPaths([a.target], activeGroupId()),
+    browse: () => void addApp(activeGroupId()),
+  });
 }
 
 export const FALLBACK: Record<string, string> = {

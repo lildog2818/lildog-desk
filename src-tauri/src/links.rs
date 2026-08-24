@@ -80,16 +80,26 @@ fn resolve_lnk(path: &Path, raw: &str) -> Option<Resolved> {
 }
 
 fn lnk_target(lnk: &parselnk::Lnk, path: &Path) -> Option<String> {
-    if let Some(base) = lnk
-        .link_info
-        .local_base_path
-        .clone()
-        .filter(|s| !s.is_empty())
-    {
-        let suffix = lnk
-            .link_info
-            .common_path_suffix
+    inner_target(
+        lnk.link_info
+            .local_base_path
             .clone()
+            .filter(|s| !s.is_empty()),
+        lnk.link_info.common_path_suffix.clone(),
+        lnk.string_data.relative_path.clone(),
+        path,
+    )
+}
+
+/// 从 lnk 解析信息中提取实际目标路径；供任务栏固定项解析运行态 exe 使用
+pub(crate) fn inner_target(
+    local_base_path: Option<String>,
+    common_path_suffix: Option<String>,
+    relative_path: Option<PathBuf>,
+    path: &Path,
+) -> Option<String> {
+    if let Some(base) = local_base_path {
+        let suffix = common_path_suffix
             .unwrap_or_default()
             .trim_start_matches('\\')
             .to_string();
@@ -102,7 +112,7 @@ fn lnk_target(lnk: &parselnk::Lnk, path: &Path) -> Option<String> {
             return Some(joined);
         }
     }
-    if let Some(rel) = &lnk.string_data.relative_path {
+    if let Some(rel) = &relative_path {
         if let Some(parent) = path.parent() {
             let joined = parent.join(rel);
             if joined.exists() {
@@ -197,4 +207,53 @@ fn collect_lnk_dir(
             args,
         });
     }
+}
+
+/// 固定项的运行态解析结果：exe 为空表示无法参与「正在运行」匹配
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PinResolved {
+    pub name: String,
+    pub exe: String,
+}
+
+/// 任务栏固定项添加时解析一次：lnk 解出内层目标（通常为 exe），
+/// exe 文件返回自身；目录/文档等返回空 exe（仍可启动，只是不亮运行态）。
+#[tauri::command]
+pub fn resolve_pin_target(path: String) -> Option<PinResolved> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return None;
+    }
+    let name = p
+        .file_stem()
+        .unwrap_or_else(|| p.file_name().unwrap_or_default())
+        .to_string_lossy()
+        .into_owned();
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext == "lnk" {
+        let Ok(lnk) = parselnk::Lnk::try_from(p) else {
+            return None;
+        };
+        let target = inner_target(
+            lnk.link_info
+                .local_base_path
+                .clone()
+                .filter(|s| !s.is_empty()),
+            lnk.link_info.common_path_suffix.clone(),
+            lnk.string_data.relative_path.clone(),
+            p,
+        )?;
+        let exe = if Path::new(&target).is_dir() {
+            String::new()
+        } else {
+            target
+        };
+        return Some(PinResolved { name, exe });
+    }
+    let exe = if ext == "exe" { path.clone() } else { String::new() };
+    Some(PinResolved { name, exe })
 }

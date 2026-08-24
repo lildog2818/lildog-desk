@@ -2,6 +2,7 @@ mod clipboard;
 mod icons;
 mod links;
 mod storage;
+mod taskbar;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -387,6 +388,12 @@ fn is_chromeless_label(label: &str) -> bool {
     label == "snap-preview" || label.starts_with("pin-") || label == "shot-overlay"
 }
 
+/// 停靠式窗口（任务栏）：有面板外观与玻璃，但几何由 taskbar 模块接管，
+/// 不参与吸附、阶梯、位置记忆与 clamp。
+fn is_docked_label(label: &str) -> bool {
+    label == taskbar::LABEL
+}
+
 fn ensure_widget_window(
     app: &AppHandle,
     widget_id: &str,
@@ -397,6 +404,11 @@ fn ensure_widget_window(
     let label = format!("w-{widget_id}");
     if !valid_widget_id(widget_id) {
         return Err("非法的组件 id".into());
+    }
+    // 任务栏组件：停靠几何与生命周期由 taskbar 模块接管（含复用已有窗口）
+    if widget_id == "taskbar" {
+        let _ = (title, width, height);
+        return taskbar::ensure_taskbar_window(app);
     }
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.show();
@@ -511,6 +523,10 @@ async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), St
     let label = format!("w-{widget_id}");
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.hide();
+    }
+    // 我们的任务栏被收起时，必须把系统任务栏还回来（若此前被藏起）
+    if widget_id == "taskbar" {
+        taskbar::restore_shell_tray(&app);
     }
     Ok(())
 }
@@ -1226,6 +1242,7 @@ fn snap_position(
     for (label, other) in app.webview_windows() {
         if label == win.label()
             || is_chromeless_label(&label)
+            || is_docked_label(&label)
             || !other.is_visible().unwrap_or(false)
         {
             continue;
@@ -1686,6 +1703,23 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     rebuild_tray_menu(app.handle(), &[])?;
 
+    // 任务栏原生右键菜单：把 "tb-" 开头的菜单项 id 原样转发回 w-taskbar，
+    // 由前端集中分发（打开/取消固定/隐藏系统任务栏等动作复用既有命令）
+    {
+        let handle = app.handle().clone();
+        handle.on_menu_event(move |app, event| {
+            let id = event.id.as_ref();
+            if !id.starts_with("tb-") {
+                return;
+            }
+            let payload = id.to_string();
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let _ = app.emit_to("w-taskbar", "tb-menu", payload);
+            });
+        });
+    }
+
     // 全局热键：截图(1) / 截图并贴图(2) / 呼出剪贴板面板(3)。
     // 首选被占用时沿候选链回退（例如 WPF 版剪贴板工具占用了 Ctrl+Alt+A）。
     {
@@ -1766,6 +1800,9 @@ fn toggle_widget_window_cmd(
     if let Some(existing) = app.get_webview_window(&label) {
         if existing.is_visible().unwrap_or(false) {
             let _ = existing.hide();
+            if widget_id == "taskbar" {
+                taskbar::restore_shell_tray(app);
+            }
             return Ok(());
         }
     }
@@ -1781,6 +1818,13 @@ fn toggle_main_visible(app: &AppHandle) {
             let _ = win.set_focus();
         }
     }
+}
+
+/// 任务栏「开始」按钮：开合控制台主面板
+#[tauri::command]
+async fn toggle_main(app: AppHandle) -> Result<(), String> {
+    toggle_main_visible(&app);
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -1858,6 +1902,16 @@ pub fn run() {
             get_icon,
             open_target,
             reveal_target,
+            links::resolve_pin_target,
+            taskbar::list_task_windows,
+            taskbar::activate_task_window,
+            taskbar::close_task_window,
+            taskbar::minimize_task_window,
+            taskbar::get_hide_system_bar,
+            taskbar::set_hide_system_bar,
+            taskbar::set_taskbar_expanded,
+            taskbar::show_tb_menu,
+            toggle_main,
             clipboard::read_clipboard_state,
             clipboard::write_clipboard_text,
             clipboard::write_clipboard_files,
@@ -1879,8 +1933,9 @@ pub fn run() {
             WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
-                // 预览层与贴图窗不参与任何吸附逻辑，避免自反馈或干扰
-                if is_chromeless_label(&label) {
+                // 预览层与贴图窗不参与任何吸附逻辑，避免自反馈或干扰；
+                // 任务栏为程序化停靠，同样完全跳过（含位置记忆）
+                if is_chromeless_label(&label) || is_docked_label(&label) {
                     return;
                 }
                 if let Some(win) = app.get_webview_window(&label) {
@@ -1939,8 +1994,8 @@ pub fn run() {
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
-                // 预览层与贴图窗不参与阶梯吸附等逻辑
-                if is_chromeless_label(&label) {
+                // 预览层与贴图窗不参与阶梯吸附等逻辑；任务栏同理
+                if is_chromeless_label(&label) || is_docked_label(&label) {
                     return;
                 }
                 let win = app.get_webview_window(&label);
@@ -2057,6 +2112,8 @@ pub fn run() {
         if matches!(_event, RunEvent::Exit) {
             save_pos_now(_app);
             snapshot_open_widgets(_app);
+            // 退出前把系统任务栏还回来（无论设置如何，恢复是幂等的）
+            taskbar::restore_shell_tray(_app);
         }
     });
 }
