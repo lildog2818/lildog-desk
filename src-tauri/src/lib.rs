@@ -2,7 +2,7 @@ mod icons;
 mod links;
 mod storage;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,6 +64,8 @@ struct AppState {
     pending_snap: Mutex<HashMap<String, PendingSnap>>,
     /// 调节尺寸中的预览落位目标
     pending_resize: Mutex<HashMap<String, PendingResize>>,
+    /// 当前固定（置顶）的窗口：固定的窗口自动解除吸附
+    pinned_set: Mutex<HashSet<String>>,
     /// 鼠标释放监听线程是否已启动
     watcher_started: AtomicBool,
     /// 去抖中的尺寸调节：label -> 会话
@@ -172,6 +174,14 @@ async fn set_pinned(
     let mut s = storage::load_settings(&dir);
     s.update_window(win.label(), |st| st.pinned = pin);
     storage::save_settings(&dir, &s);
+    // 同步内存缓存：固定的窗口不参与吸附
+    let label = win.label().to_string();
+    let state = app.state::<AppState>();
+    if pin {
+        state.pinned_set.lock().unwrap().insert(label);
+    } else {
+        state.pinned_set.lock().unwrap().remove(&label);
+    }
     Ok(())
 }
 
@@ -363,6 +373,11 @@ fn ensure_widget_window(
 
     if st.pinned {
         let _ = win.set_always_on_top(true);
+        app.state::<AppState>()
+            .pinned_set
+            .lock()
+            .unwrap()
+            .insert(label);
     }
 
     let _ = win.show();
@@ -1080,6 +1095,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let dir = storage::data_dir(app.handle());
     storage::migrate(&dir);
     let settings = storage::load_settings(&dir);
+    // 初始化固定窗口缓存：固定的窗口自动解除吸附
+    {
+        let state = app.state::<AppState>();
+        let mut ps = state.pinned_set.lock().unwrap();
+        for (lbl, wst) in &settings.windows {
+            if wst.pinned {
+                ps.insert(lbl.clone());
+            }
+        }
+    }
     let win = app
         .get_webview_window("main")
         .ok_or("main window missing")?;
@@ -1299,27 +1324,34 @@ pub fn run() {
                             Some(p) if p.at.elapsed() <= Duration::from_millis(250)
                         )
                     };
+                    // 固定（置顶）的窗口自动解除吸附
+                    let pinned = state.pinned_set.lock().unwrap().contains(&label);
 
                     // 预览式吸附：拖动过程零干预，接近对齐位时只显示预览框，
                     // 松开鼠标左键后由监听线程统一落位
-                    let ((tx, ty), engaged) = snap_position(&win, app, cx, cy);
-                    if !resizing_active && engaged && ((tx, ty) != (cx, cy)) {
-                        state.pending_snap.lock().unwrap().insert(
-                            label.clone(),
-                            PendingSnap { x: tx, y: ty, at: Instant::now() },
-                        );
-                        if let Ok(sz) = win.outer_size() {
-                            preview_show(
-                                app,
-                                tx,
-                                ty,
-                                sz.width as i32,
-                                sz.height as i32,
-                            );
-                        }
-                    } else {
+                    if pinned || resizing_active {
                         state.pending_snap.lock().unwrap().remove(&label);
                         hide_preview_if_idle(app);
+                    } else {
+                        let ((tx, ty), engaged) = snap_position(&win, app, cx, cy);
+                        if engaged && ((tx, ty) != (cx, cy)) {
+                            state.pending_snap.lock().unwrap().insert(
+                                label.clone(),
+                                PendingSnap { x: tx, y: ty, at: Instant::now() },
+                            );
+                            if let Ok(sz) = win.outer_size() {
+                                preview_show(
+                                    app,
+                                    tx,
+                                    ty,
+                                    sz.width as i32,
+                                    sz.height as i32,
+                                );
+                            }
+                        } else {
+                            state.pending_snap.lock().unwrap().remove(&label);
+                            hide_preview_if_idle(app);
+                        }
                     }
                 }
                 schedule_save(app);
@@ -1368,7 +1400,12 @@ pub fn run() {
                         entry.start_pos
                     };
                     if let Some(w) = &win {
-                        if let (Ok(cur), Ok(pos)) =
+                        // 固定（置顶）的窗口自动解除尺寸吸附
+                        let pinned = state.pinned_set.lock().unwrap().contains(&label);
+                        if pinned {
+                            state.pending_resize.lock().unwrap().remove(&label);
+                            hide_preview_if_idle(app);
+                        } else if let (Ok(cur), Ok(pos)) =
                             (w.outer_size(), w.outer_position())
                         {
                             let cw = cur.width as f64 / scale;
