@@ -199,7 +199,7 @@ export async function renderDashboard(root: HTMLElement): Promise<() => void> {
   // 右上角改为最小化到托盘
   const btnMin = iconButton("最小化", "─");
   btnMin.onclick = () => {
-    void getCurrentWindow().hide();
+    void getCurrentWindow().hide().catch((e) => toast(String(e)));
   };
 
   const btnGear = iconButton("设置", "⚙");
