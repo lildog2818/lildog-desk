@@ -1285,6 +1285,10 @@ pub fn run() {
             WindowEvent::Moved(pos) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
+                // 预览层自身的事件不参与任何逻辑，避免自反馈卡死
+                if label == "snap-preview" {
+                    return;
+                }
                 if let Some(win) = app.get_webview_window(&label) {
                     let (cx, cy) = clamp_fully_in_monitors(&win, pos.x, pos.y);
                     let state = app.state::<AppState>();
@@ -1339,6 +1343,10 @@ pub fn run() {
             WindowEvent::Resized(size) => {
                 let app = window.app_handle();
                 let label = window.label().to_string();
+                // 预览层自身的事件不参与任何逻辑，避免自反馈卡死
+                if label == "snap-preview" {
+                    return;
+                }
                 let win = app.get_webview_window(&label);
                 if let Some(ref w) = win {
                     clamp_size_into_monitors(w);
