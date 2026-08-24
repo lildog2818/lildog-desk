@@ -140,6 +140,7 @@ export function buildWidgetShell(
   footer: HTMLDivElement;
   btnRefresh: HTMLButtonElement;
   btnGear: HTMLButtonElement;
+  btnPin: HTMLButtonElement;
   header: HTMLElement;
 } {
   root.innerHTML = `
@@ -184,5 +185,5 @@ export function buildWidgetShell(
     void getCurrentWindow().startDragging();
   });
 
-  return { body, footer, btnRefresh, btnGear, header };
+  return { body, footer, btnRefresh, btnGear, btnPin, header };
 }
