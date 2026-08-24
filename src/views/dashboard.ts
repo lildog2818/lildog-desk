@@ -90,6 +90,7 @@ function buildCard(w: WidgetDef): HTMLDivElement {
   };
   card.oncontextmenu = (ev) => {
     ev.preventDefault();
+    ev.stopPropagation();
     buildMenu(ev.clientX, ev.clientY, [
       {
         label: "打开悬浮窗",
@@ -127,7 +128,7 @@ function renderBoard(): void {
     dog.className = "dog";
     dog.textContent = "🧩";
     hint.appendChild(dog);
-    hint.appendChild(document.createTextNode("点击右上角 ＋ 添加小组件"));
+    hint.appendChild(document.createTextNode("右键面板添加小组件 · 双击卡片弹出悬浮窗"));
     board.appendChild(hint);
   }
 }
@@ -158,15 +159,14 @@ export async function renderDashboard(root: HTMLElement): Promise<() => void> {
   `;
   const header = root.querySelector<HTMLElement>("#header")!;
 
-  const btnAdd = iconButton("添加小组件", "＋");
-  btnAdd.onclick = (ev) => {
-    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+  // 组件菜单：面板空白处右键打开（添加/弹出入口）
+  const openWidgetMenu = (x: number, y: number): void => {
     const hiddenOnes = allWidgets().filter((w) =>
       dashState.data.hidden.includes(w.id),
     );
-    buildMenu(rect.left, rect.bottom + 6, [
+    buildMenu(x, y, [
       ...visibleWidgets().map((w) => ({
-        label: `${w.icon} ${w.name}（已添加）`,
+        label: `${w.icon} ${w.name}`,
         action: () =>
           void openWidgetWindow(
             w.id,
@@ -175,9 +175,7 @@ export async function renderDashboard(root: HTMLElement): Promise<() => void> {
             w.height,
           ).catch((e) => toast(String(e))),
       })),
-      ...(hiddenOnes.length
-        ? [{ action: undefined }]
-        : []),
+      ...(hiddenOnes.length ? [{ action: undefined }] : []),
       ...hiddenOnes.map((w) => ({
         label: `${w.icon} 添加「${w.name}」`,
         action: () => {
@@ -192,6 +190,18 @@ export async function renderDashboard(root: HTMLElement): Promise<() => void> {
     ]);
   };
 
+  const board = root.querySelector<HTMLElement>("#board")!;
+  board.addEventListener("contextmenu", (ev) => {
+    ev.preventDefault();
+    openWidgetMenu(ev.clientX, ev.clientY);
+  });
+
+  // 右上角改为最小化到托盘
+  const btnMin = iconButton("最小化", "─");
+  btnMin.onclick = () => {
+    void getCurrentWindow().hide();
+  };
+
   const btnGear = iconButton("设置", "⚙");
   btnGear.onclick = () => {
     const wasOpen = document.querySelector(".opacity-pop");
@@ -200,7 +210,7 @@ export async function renderDashboard(root: HTMLElement): Promise<() => void> {
     void openAppearanceMenu(btnGear, true);
   };
 
-  header.append(btnAdd, btnGear);
+  header.append(btnMin, btnGear);
   header.addEventListener("pointerdown", (ev) => {
     const t = ev.target as HTMLElement;
     if (t.closest("button")) return;
