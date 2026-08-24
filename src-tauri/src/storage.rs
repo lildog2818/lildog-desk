@@ -14,6 +14,12 @@ fn default_glass() -> f64 {
     0.376
 }
 
+/// 四类字号的默认值（px），与前端 glass.css 中 --fs-* 保持一致
+pub const DEFAULT_FONT_UI: f64 = 12.5;
+pub const DEFAULT_FONT_TITLE: f64 = 14.0;
+pub const DEFAULT_FONT_SMALL: f64 = 11.0;
+pub const DEFAULT_FONT_VALUE: f64 = 13.5;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct WinState {
@@ -78,9 +84,22 @@ pub struct AppSettings {
     /// 主题：背景色
     #[serde(default)]
     pub bg_color: Option<String>,
-    /// 文字描边增强可读性（None 视为开启）
+    /// 文字描边增强可读性（None 视为开启；旧字段，仅作迁移回退）
     #[serde(default)]
     pub text_stroke: Option<bool>,
+    /// 文字可读性增强级别：off=关闭 std=标准 max=强化。
+    /// None 时按旧 text_stroke 布尔值推断，实现老配置平滑迁移。
+    #[serde(default)]
+    pub text_effect: Option<String>,
+    /// 四类字号（px）：界面正文 / 标题 / 辅助小字 / 数值。None 用默认值。
+    #[serde(default)]
+    pub font_size_ui: Option<f64>,
+    #[serde(default)]
+    pub font_size_title: Option<f64>,
+    #[serde(default)]
+    pub font_size_small: Option<f64>,
+    #[serde(default)]
+    pub font_size_value: Option<f64>,
     /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
     #[serde(default)]
     pub clip_dir: Option<String>,
@@ -115,9 +134,47 @@ impl AppSettings {
         self.size_step.unwrap_or(48).clamp(8, 200)
     }
 
+    /// 可读性增强级别：优先新字段，缺省按旧布尔开关推断（开=std 关=off）
+    pub fn text_effect(&self) -> String {
+        if let Some(v) = &self.text_effect {
+            if matches!(v.as_str(), "off" | "std" | "max") {
+                return v.clone();
+            }
+        }
+        if self.text_stroke.unwrap_or(true) {
+            "std".to_string()
+        } else {
+            "off".to_string()
+        }
+    }
+
+    pub fn font_size_ui(&self) -> f64 {
+        clamp_font(self.font_size_ui, DEFAULT_FONT_UI)
+    }
+
+    pub fn font_size_title(&self) -> f64 {
+        clamp_font(self.font_size_title, DEFAULT_FONT_TITLE)
+    }
+
+    pub fn font_size_small(&self) -> f64 {
+        clamp_font(self.font_size_small, DEFAULT_FONT_SMALL)
+    }
+
+    pub fn font_size_value(&self) -> f64 {
+        clamp_font(self.font_size_value, DEFAULT_FONT_VALUE)
+    }
+
     pub fn update_window<F: FnOnce(&mut WinState)>(&mut self, label: &str, f: F) {
         let st = self.windows.entry(label.to_string()).or_default();
         f(st);
+    }
+}
+
+/// 字号合法性与兜底：超出范围的存档值一律回退默认
+fn clamp_font(v: Option<f64>, default: f64) -> f64 {
+    match v {
+        Some(x) if x.is_finite() && (8.0..=32.0).contains(&x) => x,
+        _ => default,
     }
 }
 

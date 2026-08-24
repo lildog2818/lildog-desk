@@ -17,6 +17,11 @@
   --bg-c1: 40, 40, 55;
   --bg-c2: 16, 16, 24;
   --bg-c3: 28, 22, 38;
+  /* 四类字号变量：外观菜单「字号设置」分别调节（默认值即原设计稿字号） */
+  --fs-ui: 12.5px; /* 界面正文：输入框/按钮/菜单/列表项 */
+  --fs-title: 14px; /* 标题：窗口标题/对话框标题 */
+  --fs-small: 11px; /* 辅助小字：时间戳/计数/说明文字 */
+  --fs-value: 13.5px; /* 数值与强调：用量百分比/余额等数字的基准 */
 }
 
 html,
@@ -85,14 +90,36 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* 文字可读性增强：细描边 + 多向暗阴影，浅色/复杂背景下仍可读。
-   默认开启，外观菜单「文字描边」开关写 html[data-stroke] 控制 */
-html:not([data-stroke="off"]) #app {
+/* 文字可读性增强：挂在 body 上靠继承覆盖所有文本（含右键菜单/弹窗/toast 等
+   直接挂在 body 下的节点；旧版只作用于 #app 导致这些区域完全无效）。
+   data-stroke 三档：off=关闭 / std=标准 / max=强化，缺省按 std 处理。
+   描边用 -webkit-text-stroke + paint-order:stroke fill（描边画在字形外侧，
+   类似视频字幕），叠加贴字暗阴影，浅色/复杂壁纸下笔画仍清晰不发糊。 */
+html:not([data-stroke="off"]) body {
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.32px rgba(0, 0, 0, 0.38);
   text-shadow:
-    0 0 1px rgba(0, 0, 0, 0.6),
-    0 1px 2px rgba(0, 0, 0, 0.42),
-    1px 0 1px rgba(0, 0, 0, 0.28),
-    -1px 0 1px rgba(0, 0, 0, 0.28);
+    0 1px 1px rgba(0, 0, 0, 0.48),
+    0 0 3px rgba(0, 0, 0, 0.28);
+}
+
+html[data-stroke="max"] body {
+  -webkit-text-stroke: 0.58px rgba(0, 0, 0, 0.62);
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.66),
+    0 0 5px rgba(0, 0, 0, 0.42);
+}
+
+html[data-stroke="off"] body {
+  paint-order: normal;
+  -webkit-text-stroke: 0;
+  text-shadow: none;
+}
+
+/* 大号表情/图标字形不加描边，避免彩色 emoji 出现脏边 */
+html:not([data-stroke="off"]) :is(#logo, #pill-logo, .qw-icon, .wcard-icon, .empty-hint .dog) {
+  -webkit-text-stroke: 0;
+  text-shadow: none;
 }
 
 #header {
@@ -110,7 +137,7 @@ html:not([data-stroke="off"]) #app {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  font-size: 15px;
+  font-size: calc(var(--fs-ui) + 2.5px);
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -129,14 +156,36 @@ html:not([data-stroke="off"]) #app {
 
 .opacity-pop {
   width: 232px;
+  max-height: calc(100vh - 20px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 14px 10px;
+}
+
+.opacity-pop::-webkit-scrollbar {
+  width: 5px;
+}
+
+.opacity-pop::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+/* 弹窗内分组标题（字号设置 / 可读性 …） */
+.pop-section {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--stroke);
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+  letter-spacing: 1px;
 }
 
 .opacity-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   margin-bottom: 8px;
 }
 
@@ -164,7 +213,7 @@ html:not([data-stroke="off"]) #app {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-small);
   cursor: pointer;
   padding: 0;
 }
@@ -219,7 +268,7 @@ html:not([data-stroke="off"]) #app {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 
@@ -232,7 +281,7 @@ html:not([data-stroke="off"]) #app {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   margin-top: 12px;
 }
 
@@ -284,7 +333,7 @@ html:not([data-stroke="off"]) #app {
 
 #search-icon {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: calc(var(--fs-ui) + 0.5px);
 }
 
 #search {
@@ -294,7 +343,7 @@ html:not([data-stroke="off"]) #app {
   border: none;
   outline: none;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
 }
 
 #search::placeholder {
@@ -344,13 +393,13 @@ html:not([data-stroke="off"]) #app {
 }
 
 .group-name {
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   font-weight: 600;
   letter-spacing: 0.3px;
 }
 
 .group-count {
-  font-size: 10.5px;
+  font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
   background: rgba(255, 255, 255, 0.08);
   border-radius: 8px;
@@ -359,7 +408,7 @@ html:not([data-stroke="off"]) #app {
 
 .group-chevron {
   margin-left: auto;
-  font-size: 10px;
+  font-size: calc(var(--fs-small) - 1px);
   color: var(--text-dim);
 }
 
@@ -459,7 +508,7 @@ body.drag-active * {
 
 .tile-label {
   max-width: 100%;
-  font-size: 11px;
+  font-size: var(--fs-small);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -479,7 +528,7 @@ body.drag-active * {
   text-align: center;
   margin-top: 80px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 2;
 }
 
@@ -507,7 +556,7 @@ body.drag-active * {
   justify-content: space-between;
   align-items: center;
   padding: 7px 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
@@ -567,7 +616,7 @@ body.drag-active * {
 }
 
 .dialog h3 {
-  font-size: 14px;
+  font-size: var(--fs-title);
   margin-bottom: 14px;
 }
 
@@ -577,7 +626,7 @@ body.drag-active * {
 
 .field label {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-small);
   color: var(--text-dim);
   margin-bottom: 4px;
 }
@@ -591,7 +640,7 @@ body.drag-active * {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.07);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   outline: none;
 }
 
@@ -605,7 +654,7 @@ body.drag-active * {
 }
 
 .path-note {
-  font-size: 10.5px;
+  font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
   word-break: break-all;
   line-height: 1.4;
@@ -625,7 +674,7 @@ body.drag-active * {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.07);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   outline: none;
 }
 
@@ -659,7 +708,7 @@ body.drag-active * {
   padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
 }
 
 .pick-row:hover {
@@ -702,7 +751,7 @@ body.drag-active * {
 }
 
 .picker-status {
-  font-size: 11px;
+  font-size: var(--fs-small);
   color: var(--text-dim);
   margin-top: 8px;
 }
@@ -720,7 +769,7 @@ body.drag-active * {
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   cursor: pointer;
 }
 
@@ -758,7 +807,7 @@ body.drag-active * {
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  font-size: 14px;
+  font-size: var(--fs-title);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
@@ -776,17 +825,17 @@ body.drag-active * {
 }
 
 #pill-logo {
-  font-size: 22px;
+  font-size: calc(var(--fs-title) + 8px);
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.5));
 }
 
 #pill-name {
-  font-size: 12px;
+  font-size: var(--fs-ui);
   font-weight: 600;
 }
 
 #pill-count {
-  font-size: 10.5px;
+  font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
 }
 
@@ -807,7 +856,7 @@ body.collapsed #pill {
   z-index: 300;
   padding: 7px 14px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   background: rgba(30, 30, 42, 0.9);
   border: 1px solid var(--stroke-strong);
   opacity: 0;

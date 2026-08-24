@@ -133,18 +133,53 @@ async fn get_window_state(
         "sizeStep": settings.size_step(),
         "fontColor": settings.font_color(),
         "bgColor": settings.bg_color(),
-        "textStroke": settings.text_stroke.unwrap_or(true),
+        "textEffect": settings.text_effect(),
+        "fontSizeUi": settings.font_size_ui(),
+        "fontSizeTitle": settings.font_size_title(),
+        "fontSizeSmall": settings.font_size_small(),
+        "fontSizeValue": settings.font_size_value(),
     }))
 }
 
-/// 文字描边开关：广播到所有窗口
+/// 文字可读性增强级别（off/std/max）：保存并广播到所有窗口
 #[tauri::command]
-async fn set_text_stroke(app: AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_text_effect(app: AppHandle, level: String) -> Result<(), String> {
+    if !matches!(level.as_str(), "off" | "std" | "max") {
+        return Err(format!("非法的可读性级别：{level}"));
+    }
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
-    s.text_stroke = Some(enabled);
+    s.text_effect = Some(level.clone());
     storage::save_settings(&dir, &s);
-    let _ = app.emit("text-stroke", enabled);
+    let _ = app.emit("text-effect", level);
+    Ok(())
+}
+
+/// 统一保存四类字号（界面/标题/辅助/数值，px）并广播到所有窗口
+#[tauri::command]
+async fn set_font_sizes(
+    app: AppHandle,
+    ui: f64,
+    title: f64,
+    small: f64,
+    value: f64,
+) -> Result<(), String> {
+    for (name, v) in [("界面", ui), ("标题", title), ("辅助", small), ("数值", value)] {
+        if !v.is_finite() || !(8.0..=32.0).contains(&v) {
+            return Err(format!("非法的{name}字号：{v}"));
+        }
+    }
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.font_size_ui = Some(ui);
+    s.font_size_title = Some(title);
+    s.font_size_small = Some(small);
+    s.font_size_value = Some(value);
+    storage::save_settings(&dir, &s);
+    let _ = app.emit(
+        "font-sizes",
+        serde_json::json!({ "ui": ui, "title": title, "small": small, "value": value }),
+    );
     Ok(())
 }
 
@@ -1804,7 +1839,8 @@ pub fn run() {
             load_widget_data,
             save_widget_data,
             get_window_state,
-            set_text_stroke,
+            set_text_effect,
+            set_font_sizes,
             set_size_step,
             set_theme,
             set_pinned,

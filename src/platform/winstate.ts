@@ -8,13 +8,29 @@ export interface WinState {
   sizeStep: number;
   fontColor?: string | null;
   bgColor?: string | null;
-  textStroke?: boolean;
+  /** 可读性增强级别：off=关闭 std=标准 max=强化 */
+  textEffect?: string;
+  /** 四类字号（px） */
+  fontSizeUi?: number;
+  fontSizeTitle?: number;
+  fontSizeSmall?: number;
+  fontSizeValue?: number;
 }
 
 export interface ThemeCfg {
   fontColor?: string | null;
   bgColor?: string | null;
 }
+
+/** 四类字号：界面正文 / 标题 / 辅助小字 / 数值 */
+export interface FontSizes {
+  ui: number;
+  title: number;
+  small: number;
+  value: number;
+}
+
+export type TextEffectLevel = "off" | "std" | "max";
 
 export interface TrayItem {
   id: string;
@@ -44,8 +60,16 @@ export const setTheme = (theme: ThemeCfg): Promise<void> =>
     bgColor: theme.bgColor ?? "",
   });
 
-export const setTextStroke = (enabled: boolean): Promise<void> =>
-  invoke("set_text_stroke", { enabled });
+export const setTextEffect = (level: TextEffectLevel): Promise<void> =>
+  invoke("set_text_effect", { level });
+
+export const setFontSizes = (sizes: FontSizes): Promise<void> =>
+  invoke("set_font_sizes", {
+    ui: sizes.ui,
+    title: sizes.title,
+    small: sizes.small,
+    value: sizes.value,
+  });
 
 export const getAutostart = (): Promise<boolean> => invoke("get_autostart");
 

@@ -26,7 +26,7 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: calc(var(--fs-small) + 0.5px);
   cursor: pointer;
 }
 
@@ -50,7 +50,7 @@
   background: rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   outline: none;
 }
 
@@ -123,7 +123,7 @@
   justify-content: center;
   background: rgba(96, 165, 250, 0.14);
   border: 1px solid rgba(96, 165, 250, 0.28);
-  font-size: 14px;
+  font-size: calc(var(--fs-ui) + 1.5px);
   overflow: hidden;
 }
 
@@ -158,7 +158,7 @@
 }
 
 .cb-preview {
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1.35;
   color: var(--text);
   white-space: nowrap;
@@ -168,7 +168,7 @@
 
 .cb-sub {
   margin-top: 1px;
-  font-size: 10px;
+  font-size: calc(var(--fs-small) - 1px);
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -177,14 +177,14 @@
 
 .cb-time {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: calc(var(--fs-small) - 1px);
   color: var(--text-dim);
   text-align: right;
   line-height: 1.3;
 }
 
 .cb-pin-flag {
-  font-size: 10px;
+  font-size: calc(var(--fs-small) - 1px);
 }
 
 /* ---- 图片页签：自适应缩略图网格（参考 WPF 版） ---- */
@@ -235,13 +235,13 @@
   position: absolute;
   top: 6px;
   left: 8px;
-  font-size: 10px;
+  font-size: calc(var(--fs-small) - 1px);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
 }
 
 .cb-cell-cap {
   margin-top: 2px;
-  font-size: 9.5px;
+  font-size: calc(var(--fs-small) - 1.5px);
   color: var(--text-dim);
   text-align: center;
   white-space: nowrap;

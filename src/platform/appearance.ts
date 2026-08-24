@@ -5,25 +5,47 @@ import {
   getWindowState,
   setAutostart,
   setBgOpacity,
-  setTextStroke,
+  setFontSizes,
+  setTextEffect,
   setTheme,
   setSizeStep,
+  type FontSizes,
   type ThemeCfg,
+  type TextEffectLevel,
 } from "./winstate";
 
-/** 应用文字描边开关到当前窗口 */
-function applyTextStroke(on: boolean): void {
-  document.documentElement.dataset.stroke = on ? "on" : "off";
+/** 四类字号默认值（px），与 glass.css :root 中 --fs-* 保持一致 */
+const FONT_DEFAULTS: FontSizes = { ui: 12.5, title: 14, small: 11, value: 13.5 };
+
+/** 把四类字号写到根节点 CSS 变量，立即生效 */
+function applyFontSizes(s: FontSizes): void {
+  const st = document.documentElement.style;
+  st.setProperty("--fs-ui", `${s.ui}px`);
+  st.setProperty("--fs-title", `${s.title}px`);
+  st.setProperty("--fs-small", `${s.small}px`);
+  st.setProperty("--fs-value", `${s.value}px`);
 }
 
-/** 每个窗口启动时调用一次：应用全局透明度并监听变更广播 */
+/** 可读性增强档位写入 html[data-stroke]：off/std/max，未知值回退 std */
+function applyTextEffect(level: string): void {
+  document.documentElement.dataset.stroke =
+    level === "off" || level === "max" ? level : "std";
+}
+
+/** 每个窗口启动时调用一次：应用全局外观并监听变更广播 */
 export function initAppearance(): void {
   try {
     void getWindowState()
       .then((st) => {
         applyPanelAlpha(st.bgOpacity);
         applyTheme(st);
-        applyTextStroke(st.textStroke !== false);
+        applyTextEffect(st.textEffect ?? "std");
+        applyFontSizes({
+          ui: st.fontSizeUi ?? FONT_DEFAULTS.ui,
+          title: st.fontSizeTitle ?? FONT_DEFAULTS.title,
+          small: st.fontSizeSmall ?? FONT_DEFAULTS.small,
+          value: st.fontSizeValue ?? FONT_DEFAULTS.value,
+        });
       })
       .catch(() => applyPanelAlpha(0.55));
   } catch {
@@ -36,7 +58,12 @@ export function initAppearance(): void {
     .listen<ThemeCfg>("theme", (ev) => applyTheme(ev.payload ?? {}))
     .catch(() => {});
   void getCurrentWebview()
-    .listen<boolean>("text-stroke", (ev) => applyTextStroke(ev.payload !== false))
+    .listen<string>("text-effect", (ev) => applyTextEffect(ev.payload))
+    .catch(() => {});
+  void getCurrentWebview()
+    .listen<Partial<FontSizes>>("font-sizes", (ev) =>
+      applyFontSizes({ ...FONT_DEFAULTS, ...ev.payload }),
+    )
     .catch(() => {});
 }
 
@@ -246,26 +273,72 @@ export function autostartRow(): HTMLDivElement {
   return autoRow;
 }
 
-/** 文字描边开关：细描边+阴影让文字在任意背景下可读 */
-function textStrokeRow(initial: boolean): HTMLDivElement {
+/** 弹窗内分组标题 */
+function sectionLabel(text: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "pop-section";
+  el.textContent = text;
+  return el;
+}
+
+/** 字号滑条：拖动实时预览（写 CSS 变量），停止后持久化整组字号 */
+function fontSliderRow(
+  labelText: string,
+  key: keyof FontSizes,
+  initial: number,
+  min: number,
+  max: number,
+  sizes: FontSizes,
+): HTMLDivElement {
+  return sliderRow({
+    label: labelText,
+    initial,
+    min,
+    max,
+    stepSize: 0.5,
+    format: (v) => `${v}px`,
+    onLive: (v) => applyFontSizes({ ...sizes, [key]: v }),
+    onCommit: (v) => {
+      sizes[key] = v;
+      return setFontSizes(sizes);
+    },
+  });
+}
+
+/** 可读性增强三档：关闭 / 标准（细描边+阴影）/ 强化（粗描边+深阴影） */
+const READABILITY_LEVELS: Array<{ v: TextEffectLevel; label: string }> = [
+  { v: "off", label: "关闭" },
+  { v: "std", label: "标准" },
+  { v: "max", label: "强化" },
+];
+
+function readabilityRow(initial: string): HTMLDivElement {
+  const wrap = document.createElement("div");
+  const head = document.createElement("div");
+  head.className = "opacity-head";
+  head.title = "描边+阴影让文字在浅色或复杂壁纸上保持清晰";
+  const title = document.createElement("span");
+  title.textContent = "可读性增强";
+  head.appendChild(title);
+
   const row = document.createElement("div");
-  row.className = "auto-row";
-  const label = document.createElement("span");
-  label.textContent = "文字描边（增强可读性）";
-  const toggle = document.createElement("button");
-  toggle.className = "auto-toggle";
-  toggle.classList.toggle("on", initial);
-  row.append(label, toggle);
-  toggle.onclick = () => {
-    const next = !toggle.classList.contains("on");
-    toggle.classList.toggle("on", next);
-    applyTextStroke(next);
-    void setTextStroke(next).catch((e) => {
-      toggle.classList.toggle("on", !next);
-      toast(String(e));
-    });
-  };
-  return row;
+  row.className = "ladder-row";
+  for (const opt of READABILITY_LEVELS) {
+    const b = document.createElement("button");
+    b.className = "ladder-btn" + (opt.v === initial ? " on" : "");
+    b.textContent = opt.label;
+    b.onclick = () => {
+      row
+        .querySelectorAll(".ladder-btn")
+        .forEach((el) => el.classList.remove("on"));
+      b.classList.add("on");
+      applyTextEffect(opt.v);
+      void setTextEffect(opt.v).catch((e) => toast(String(e)));
+    };
+    row.appendChild(b);
+  }
+  wrap.append(head, row);
+  return wrap;
 }
 
 export async function buildAppearancePop(
@@ -295,7 +368,36 @@ export async function buildAppearancePop(
         bgColor: st.bgColor || THEME_FALLBACK.bgColor,
       }),
     );
-    pop.appendChild(textStrokeRow(st.textStroke !== false));
+
+    // 字号设置：四类字体分别调节，拖动即时预览
+    const sizes: FontSizes = {
+      ui: st.fontSizeUi ?? FONT_DEFAULTS.ui,
+      title: st.fontSizeTitle ?? FONT_DEFAULTS.title,
+      small: st.fontSizeSmall ?? FONT_DEFAULTS.small,
+      value: st.fontSizeValue ?? FONT_DEFAULTS.value,
+    };
+    pop.appendChild(sectionLabel("字号设置"));
+    pop.appendChild(fontSliderRow("界面字体", "ui", sizes.ui, 10, 18, sizes));
+    pop.appendChild(fontSliderRow("标题字体", "title", sizes.title, 11, 22, sizes));
+    pop.appendChild(fontSliderRow("辅助小字", "small", sizes.small, 9, 16, sizes));
+    pop.appendChild(fontSliderRow("数值字体", "value", sizes.value, 12, 24, sizes));
+
+    const fsReset = document.createElement("button");
+    fsReset.className = "theme-reset";
+    fsReset.textContent = "恢复默认字号";
+    fsReset.onclick = () => {
+      Object.assign(sizes, FONT_DEFAULTS);
+      applyFontSizes(sizes);
+      void setFontSizes(sizes).catch((e) => toast(String(e)));
+    };
+    const fsWrap = document.createElement("div");
+    fsWrap.style.marginTop = "8px";
+    fsWrap.appendChild(fsReset);
+    pop.appendChild(fsWrap);
+
+    // 可读性增强：三档描边+阴影
+    pop.appendChild(sectionLabel("文字效果"));
+    pop.appendChild(readabilityRow(st.textEffect ?? "std"));
     if (withAutostart) pop.appendChild(autostartRow());
   } catch {
     /* window state unavailable */
@@ -311,6 +413,8 @@ export async function openAppearanceMenu(
   const rect = anchor.getBoundingClientRect();
   const pop = await buildAppearancePop(withAutostart);
   pop.style.left = `${Math.max(8, rect.right - 232)}px`;
-  pop.style.top = `${rect.bottom + 6}px`;
   document.body.appendChild(pop);
+  // 内容变多后可能超出窗口底部：按实际高度向上收，保持完整可见
+  const h = pop.getBoundingClientRect().height;
+  pop.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - h - 8))}px`;
 }

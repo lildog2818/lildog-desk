@@ -1,10 +1,10 @@
 .qw-icon {
-  font-size: 18px;
+  font-size: calc(var(--fs-title) + 4px);
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
 }
 
 .qw-title {
-  font-size: 14px;
+  font-size: var(--fs-title);
   font-weight: 650;
   letter-spacing: 0.4px;
 }
@@ -19,7 +19,7 @@
 .qw-footer {
   flex-shrink: 0;
   padding: 4px 14px 10px;
-  font-size: 11px;
+  font-size: var(--fs-small);
   color: var(--text-dim);
   text-align: center;
 }
@@ -49,7 +49,7 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 13.5px;
+  font-size: var(--fs-value);
 }
 
 .qbar-name {
@@ -58,7 +58,7 @@
 }
 
 .qbar-val {
-  font-size: 13.5px;
+  font-size: var(--fs-value);
   font-weight: 700;
   color: var(--text);
 }
@@ -80,7 +80,7 @@
 }
 
 .qbar-foot {
-  font-size: 11.5px;
+  font-size: calc(var(--fs-small) + 0.5px);
   color: var(--text-dim);
   min-height: 14px;
 }
@@ -93,7 +93,7 @@
 }
 
 .ds-total {
-  font-size: 44px;
+  font-size: calc(var(--fs-value) * 3.26);
   font-weight: 750;
   letter-spacing: 1px;
   text-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
@@ -109,11 +109,11 @@
   align-items: center;
   justify-content: center;
   gap: 9px;
-  font-size: 13.5px;
+  font-size: var(--fs-value);
 }
 
 .ds-chip {
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--text-dim);
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid var(--stroke);
@@ -134,7 +134,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-ui);
   color: var(--text-dim);
   margin-top: 4px;
 }
