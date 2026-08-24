@@ -503,8 +503,9 @@ fn dib_to_rgba(dib: &[u8]) -> Result<(Vec<u8>, i32, i32), String> {
             return (0, 0);
         }
         let shift = mask.trailing_zeros();
-        let bits = (32 - shift - (mask >> shift).leading_zeros()).max(1);
-        (shift, bits.min(8))
+        // 位宽 = 去掉低位零后的有效位数（此前误减两次 shift 导致绿通道损坏）
+        let width = 32 - (mask >> shift).leading_zeros();
+        (shift, width.clamp(1, 8))
     };
     // 按掩码取出通道值；位宽不足 8 时线性放大到 0..255
     let extract = |px: u32, mask: u32| -> u8 {
