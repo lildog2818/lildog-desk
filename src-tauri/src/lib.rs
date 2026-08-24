@@ -543,23 +543,31 @@ fn quantize_logical(v: f64, step: u32, min: f64) -> f64 {
 
 /// 磁性吸附：拖动时窗口边缘贴近其他可见窗口或屏幕边缘则自动贴合。
 /// 窗口之间允许重叠；除首尾拼接外，还支持同边对齐（左/右/上/下）。
-fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
+/// 返回 (吸附后位置, 是否处于感应区内)。感应区内即使无需位移也返回 true，
+/// 用于区分「已落在目标上」和「周边没有目标」。
+fn snap_position(
+    win: &WebviewWindow,
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+) -> ((i32, i32), bool) {
     let Ok(scale) = win.scale_factor() else {
-        return (x, y);
+        return ((x, y), false);
     };
     let th = (SNAP_ENGAGE_LOGICAL * scale).round() as i32;
     let Ok(size) = win.outer_size() else {
-        return (x, y);
+        return ((x, y), false);
     };
     let w = size.width as i32;
     let h = size.height as i32;
     if w <= 0 || h <= 0 {
-        return (x, y);
+        return ((x, y), false);
     }
     let mut l = x;
     let mut r = x + w;
     let mut t = y;
     let mut b = y + h;
+    let mut engaged = false;
 
     // 与其他可见窗口吸附
     for (label, other) in app.webview_windows() {
@@ -581,17 +589,21 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
         let v_near = t < ob + th && b > ot - th;
         if v_near {
             if (l - or_).abs() <= th {
+                engaged = true;
                 l = or_;
                 r = l + w;
             } else if (r - ol).abs() <= th {
+                engaged = true;
                 l = ol - w;
                 r = ol;
             } else if (l - ol).abs() <= th {
                 // 允许重叠：左边缘与对方左边缘对齐
+                engaged = true;
                 l = ol;
                 r = l + w;
             } else if (r - or_).abs() <= th {
                 // 右边缘对齐
+                engaged = true;
                 r = or_;
                 l = r - w;
             }
@@ -599,17 +611,21 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
         let h_near = l < or_ + th && r > ol - th;
         if h_near {
             if (t - ob).abs() <= th {
+                engaged = true;
                 t = ob;
                 b = t + h;
             } else if (b - ot).abs() <= th {
+                engaged = true;
                 t = ot - h;
                 b = ot;
             } else if (t - ot).abs() <= th {
                 // 允许重叠：上边缘对齐
+                engaged = true;
                 t = ot;
                 b = t + h;
             } else if (b - ob).abs() <= th {
                 // 下边缘对齐
+                engaged = true;
                 b = ob;
                 t = b - h;
             }
@@ -630,9 +646,11 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
             let v_near = t < mb + th && b > mt - th;
             if v_near {
                 if (l - ml).abs() <= th {
+                    engaged = true;
                     l = ml;
                     r = l + w;
                 } else if (r - mr).abs() <= th {
+                    engaged = true;
                     l = mr - w;
                     r = mr;
                 }
@@ -640,9 +658,11 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
             let h_near = l < mr + th && r > ml - th;
             if h_near {
                 if (t - mt).abs() <= th {
+                    engaged = true;
                     t = mt;
                     b = t + h;
                 } else if (b - mb).abs() <= th {
+                    engaged = true;
                     t = mb - h;
                     b = mb;
                 }
@@ -650,7 +670,7 @@ fn snap_position(win: &WebviewWindow, app: &AppHandle, x: i32, y: i32) -> (i32, 
         }
     }
 
-    (l, t)
+    ((l, t), engaged)
 }
 
 fn clamp_fully_in_monitors(win: &WebviewWindow, x: i32, y: i32) -> (i32, i32) {
@@ -1120,25 +1140,23 @@ pub fn run() {
                         locks.remove(&label);
                         (cx, cy)
                     } else {
-                        // 每次移动都重新评估最近吸附目标：
-                        // · 目标与当前锁定相同 → 完全跟手，不反复拉扯
-                        // · 目标变化（对齐到另一条边）→ 立即跳过去
-                        // · 无目标 → 立即解锁，保证下次贴近边缘能重新触发
-                        let (sx, sy) = snap_position(&win, app, cx, cy);
-                        if sx != cx || sy != cy {
-                            let same_as_lock = matches!(
-                                locks.get(&label),
-                                Some(o) if *o == (sx, sy)
-                            );
+                        // 每次移动都重新评估吸附：
+                        // · 感应区内无目标 → 解锁，完全跟手
+                        // · 有目标且与锁定相同（含已落在目标上）→ 跟手不拉扯
+                        // · 有目标但不同于锁定 → 立即跳到新目标
+                        let ((sx, sy), engaged) = snap_position(&win, app, cx, cy);
+                        if !engaged {
+                            locks.remove(&label);
+                            (cx, cy)
+                        } else {
+                            let same_as_lock =
+                                matches!(locks.get(&label), Some(o) if *o == (sx, sy));
                             locks.insert(label.clone(), (sx, sy));
-                            if same_as_lock {
+                            if same_as_lock || (sx, sy) == (cx, cy) {
                                 (cx, cy)
                             } else {
                                 (sx, sy)
                             }
-                        } else {
-                            locks.remove(&label);
-                            (cx, cy)
                         }
                     };
                     if final_pos.0 != pos.x || final_pos.1 != pos.y {
