@@ -65,6 +65,43 @@ pub struct OpenWindow {
     pub title: String,
 }
 
+/// 原生任务栏风格替换配置（nativebar 模块消费；缺省字段按 Default 兜底）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NativeBarCfg {
+    /// clear | blur | acrylic | solid
+    #[serde(default = "default_nb_mode")]
+    pub mode: String,
+    /// 自定义色调 #rrggbb（None = 跟随主题或默认底色 #282837）
+    #[serde(default)]
+    pub tint: Option<String>,
+    /// 0..1
+    #[serde(default = "default_nb_opacity")]
+    pub opacity: f64,
+    /// 色调跟随应用主题背景色
+    #[serde(default)]
+    pub follow_theme: bool,
+}
+
+fn default_nb_mode() -> String {
+    "acrylic".to_string()
+}
+
+fn default_nb_opacity() -> f64 {
+    0.75
+}
+
+impl Default for NativeBarCfg {
+    fn default() -> Self {
+        Self {
+            mode: default_nb_mode(),
+            tint: None,
+            opacity: default_nb_opacity(),
+            follow_theme: false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -103,6 +140,9 @@ pub struct AppSettings {
     /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
     #[serde(default)]
     pub clip_dir: Option<String>,
+    /// 原生任务栏风格替换（None = 未配置，用默认参数）
+    #[serde(default)]
+    pub native_bar: Option<NativeBarCfg>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }

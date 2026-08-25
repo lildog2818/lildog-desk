@@ -1,10 +1,9 @@
 mod clipboard;
 mod icons;
 mod links;
-mod panel;
+mod nativebar;
 mod storage;
 mod system;
-mod taskbar;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -92,6 +91,10 @@ struct AppState {
     shot_target: Mutex<u8>,
     /// 已注册的全局热键：shortcut -> 用途（1/2/3）
     hotkey_map: Mutex<Vec<(tauri_plugin_global_shortcut::Shortcut, u8)>>,
+    /// 原生任务栏替换：当前配置缓存（None=未配置，用默认参数）
+    native_bar: Mutex<Option<storage::NativeBarCfg>>,
+    /// 已应用策略的任务栏句柄 -> 策略签名（去重与退出还原依据）
+    native_painted: Mutex<HashMap<isize, u32>>,
 }
 
 // ---------------- 小组件数据 ----------------
@@ -214,6 +217,8 @@ async fn set_theme(app: AppHandle, font_color: String, bg_color: String) -> Resu
             "bgColor": s.bg_color,
         }),
     );
+    // 原生任务栏替换开启「跟随主题」时，背景色变化需立即重涂
+    nativebar::sync(&app);
     Ok(())
 }
 
@@ -391,7 +396,6 @@ fn is_chromeless_label(label: &str) -> bool {
     label == "snap-preview"
         || label.starts_with("pin-")
         || label == "shot-overlay"
-        || label == panel::PANEL_LABEL
 }
 
 fn ensure_widget_window(
@@ -408,6 +412,10 @@ fn ensure_widget_window(
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.show();
         let _ = existing.set_focus();
+        if label == "w-taskbar" {
+            // 打开「任务栏」开关卡 = 开启原生风格替换
+            nativebar::sync(app);
+        }
         return Ok(());
     }
 
@@ -416,12 +424,21 @@ fn ensure_widget_window(
     let st = settings.window(&label);
     let glass = settings.global_glass();
     let step = *app.state::<AppState>().size_step.lock().unwrap();
-    // 折叠态的窗口按 pill 高度还原，与前端 body.collapsed 外观保持一致
-    let w = quantize_logical(st.width.unwrap_or(width).max(160.0), step, 160.0);
+    // 折叠态的窗口按 pill 高度还原，与前端 body.collapsed 外观保持一致。
+    // 旧版自绘任务栏遗留的 880×72 尺寸对开关卡无意义：记录高度过小时
+    // 视为脏数据，回退到注册默认尺寸（width/height 参数）。
+    let stored_w = st.width.unwrap_or(width);
+    let stored_h = st.height.unwrap_or(height);
+    let (src_w, src_h) = if stored_h < 160.0 {
+        (width, height)
+    } else {
+        (stored_w.max(160.0), stored_h.max(96.0))
+    };
+    let w = quantize_logical(src_w, step, 160.0);
     let h = if st.collapsed {
         COLLAPSED_LOGICAL_H
     } else {
-        quantize_logical(st.height.unwrap_or(height).max(96.0), step, 96.0)
+        quantize_logical(src_h, step, 96.0)
     };
 
     let win = WebviewWindowBuilder::new(
@@ -475,11 +492,15 @@ fn ensure_widget_window(
             .pinned_set
             .lock()
             .unwrap()
-            .insert(label);
+            .insert(label.clone());
     }
 
     let _ = win.show();
     let _ = win.set_focus();
+    if label == "w-taskbar" {
+        // 新建「任务栏」开关卡并显示 = 开启原生风格替换
+        nativebar::sync(app);
+    }
     Ok(())
 }
 
@@ -506,6 +527,10 @@ async fn toggle_widget_window(
     if let Some(existing) = app.get_webview_window(&label) {
         if existing.is_visible().unwrap_or(false) {
             let _ = existing.hide();
+            if widget_id == "taskbar" {
+                // 关闭「任务栏」开关卡 = 还原系统默认任务栏外观
+                nativebar::sync(&app);
+            }
             return Ok(());
         }
     }
@@ -518,6 +543,9 @@ async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), St
     let label = format!("w-{widget_id}");
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.hide();
+        if widget_id == "taskbar" {
+            nativebar::sync(&app);
+        }
     }
     Ok(())
 }
@@ -1693,23 +1721,6 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     rebuild_tray_menu(app.handle(), &[])?;
 
-    // 任务栏原生右键菜单：把 "tb-" 开头的菜单项 id 原样转发回 w-taskbar，
-    // 由前端集中分发（打开/取消固定/隐藏系统任务栏等动作复用既有命令）
-    {
-        let handle = app.handle().clone();
-        handle.on_menu_event(move |app, event| {
-            let id = event.id.as_ref();
-            if !id.starts_with("tb-") {
-                return;
-            }
-            let payload = id.to_string();
-            let app = app.clone();
-            std::thread::spawn(move || {
-                let _ = app.emit_to("w-taskbar", "tb-menu", payload);
-            });
-        });
-    }
-
     // 全局热键：截图(1) / 截图并贴图(2) / 呼出剪贴板面板(3)。
     // 首选被占用时沿候选链回退（例如 WPF 版剪贴板工具占用了 Ctrl+Alt+A）。
     {
@@ -1776,6 +1787,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let _ = ensure_widget_window(app.handle(), &ow.id, &ow.title, 300.0, 320.0);
     }
 
+    // 原生任务栏替换：载入配置缓存并启动守护同步线程
+    nativebar::init(app.handle());
+
     Ok(())
 }
 
@@ -1790,6 +1804,10 @@ fn toggle_widget_window_cmd(
     if let Some(existing) = app.get_webview_window(&label) {
         if existing.is_visible().unwrap_or(false) {
             let _ = existing.hide();
+            if widget_id == "taskbar" {
+                // 托盘路径关闭「任务栏」开关卡同样还原原生外观
+                nativebar::sync(app);
+            }
             return Ok(());
         }
     }
@@ -1883,13 +1901,8 @@ pub fn run() {
             open_target,
             reveal_target,
             links::resolve_pin_target,
-            taskbar::list_task_windows,
-            taskbar::activate_task_window,
-            taskbar::close_task_window,
-            taskbar::minimize_task_window,
-            taskbar::show_tb_menu,
-            taskbar::open_taskbar_panel,
-            panel::take_panel_mode,
+            nativebar::get_native_bar,
+            nativebar::set_native_bar,
             system::get_audio_state,
             system::set_audio_volume,
             system::set_audio_mute,
@@ -2080,13 +2093,9 @@ pub fn run() {
                 }
                 schedule_save(app);
             }
-            WindowEvent::Focused(focused) => {
+            WindowEvent::Focused(_focused) => {
                 let app = window.app_handle();
                 let label = window.label();
-                // 面板失焦即隐藏（标准 flyout 行为）
-                if !*focused && label == panel::PANEL_LABEL {
-                    let _ = window.hide();
-                }
                 #[cfg(target_os = "windows")]
                 reapply_glass_async(app, label);
             }
@@ -2097,6 +2106,8 @@ pub fn run() {
 
     app.run(|_app, _event| {
         if matches!(_event, RunEvent::Exit) {
+            // 先还原原生任务栏外观，再做常规收尾
+            nativebar::restore_all(_app);
             save_pos_now(_app);
             snapshot_open_widgets(_app);
         }

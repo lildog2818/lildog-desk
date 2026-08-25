@@ -107,3 +107,22 @@ export const closeWidgetWindow = (widgetId: string): Promise<void> =>
 
 export const updateTrayWidgets = (items: TrayItem[]): Promise<void> =>
   invoke("update_tray_widgets", { items });
+
+// ---------------- 原生任务栏风格替换 ----------------
+
+export interface NativeBarCfg {
+  /** clear=透明 blur=模糊 acrylic=亚克力 solid=纯色 */
+  mode: "clear" | "blur" | "acrylic" | "solid";
+  /** 自定义色调 #rrggbb；null = 跟随主题或默认底色 */
+  tint?: string | null;
+  /** 0..1 */
+  opacity: number;
+  /** 色调跟随应用主题背景色 */
+  followTheme: boolean;
+}
+
+export const getNativeBar = (): Promise<NativeBarCfg> =>
+  invoke<NativeBarCfg>("get_native_bar");
+
+export const setNativeBar = (cfg: NativeBarCfg): Promise<void> =>
+  invoke("set_native_bar", { cfg });
