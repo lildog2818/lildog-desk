@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::storage::{self, NativeBarCfg};
 
-// ---------------- ACCENT_POLICY FFI（未公开 API，手动声明） ----------------
+// ---------------- ACCENT_POLICY FFI（未公开 API，动态解析） ----------------
 
 const WCA_ACCENT_POLICY: u32 = 19;
 
@@ -47,13 +47,6 @@ struct WinCompAttribData {
     data: *mut AccentPolicy,
     size_of_data: usize,
     unknown: i32,
-}
-
-extern "system" {
-    fn SetWindowCompositionAttribute(
-        hwnd: *mut core::ffi::c_void,
-        data: *mut WinCompAttribData,
-    ) -> i32;
 }
 
 fn disabled_policy() -> AccentPolicy {
@@ -132,9 +125,10 @@ fn policy_for(cfg: &NativeBarCfg, theme_bg: Option<&str>) -> AccentPolicy {
 mod imp {
     use super::{
         disabled_policy, policy_for, policy_signature, AccentPolicy, NativeBarCfg,
-        SetWindowCompositionAttribute, WinCompAttribData, WCA_ACCENT_POLICY,
+        WinCompAttribData, WCA_ACCENT_POLICY,
     };
     use std::collections::HashMap;
+    use std::sync::OnceLock;
 
     use windows::core::{w, PCWSTR, BOOL};
     use windows::Win32::Foundation::{HWND, LPARAM};
@@ -142,7 +136,39 @@ mod imp {
         EnumWindows, FindWindowW, GetClassNameW, IsWindow,
     };
 
+    type SetWindowCompAttrFn =
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut WinCompAttribData) -> i32;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleW(libname: *const u16) -> *mut core::ffi::c_void;
+        fn GetProcAddress(module: *mut core::ffi::c_void, procname: *const u8)
+        -> *mut core::ffi::c_void;
+    }
+
+    /// 运行时解析 SetWindowCompositionAttribute：该 API 未公开，
+    /// user32.dll 里存在但不在导入库中，静态链接会报 LNK2019
+    /// （与 TranslucentTB 的 GetProcAddress 方案一致）。
+    fn resolve_set_wca() -> Option<SetWindowCompAttrFn> {
+        static FN: OnceLock<Option<SetWindowCompAttrFn>> = OnceLock::new();
+        *FN.get_or_init(|| unsafe {
+            const PROC: &[u8] = b"SetWindowCompositionAttribute\0";
+            let module = GetModuleHandleW(w!("user32.dll").as_ptr());
+            if module.is_null() {
+                return None;
+            }
+            let proc = GetProcAddress(module, PROC.as_ptr());
+            if proc.is_null() {
+                return None;
+            }
+            Some(std::mem::transmute::<*mut core::ffi::c_void, SetWindowCompAttrFn>(proc))
+        })
+    }
+
     fn send_policy(hwnd: HWND, policy: &AccentPolicy) {
+        let Some(set_wca) = resolve_set_wca() else {
+            return; // 极老系统缺失该 API：静默跳过，功能不可用但不崩溃
+        };
         let mut data = WinCompAttribData {
             attrib: WCA_ACCENT_POLICY,
             // 该 API 实际不修改策略结构，按惯例以可变指针传入
@@ -151,7 +177,7 @@ mod imp {
             unknown: 0,
         };
         unsafe {
-            let _ = SetWindowCompositionAttribute(hwnd.0, &mut data);
+            let _ = set_wca(hwnd.0, &mut data);
         }
     }
 
