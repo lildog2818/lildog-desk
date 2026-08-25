@@ -2,7 +2,6 @@ mod clipboard;
 mod icons;
 mod links;
 mod storage;
-mod system;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -237,6 +236,12 @@ async fn set_pinned(
     win: WebviewWindow,
     pin: bool,
 ) -> Result<(), String> {
+    // 先切换底部驻留守卫，再改置顶：否则 set_always_on_top 的抬升动作
+    // 会被仍处于开启状态的守卫强制压回底层，导致"钉住"失效
+    #[cfg(target_os = "windows")]
+    if let Ok(raw) = win.hwnd() {
+        bottom_guard::set_enabled(raw.0 as isize, !pin);
+    }
     win.set_always_on_top(pin).map_err(|e| e.to_string())?;
     let dir = storage::data_dir(&app);
     let mut s = storage::load_settings(&dir);
@@ -251,11 +256,6 @@ async fn set_pinned(
         state.pinned_set.lock().unwrap().remove(&label);
         // 解除固定后沉回最底层，不悬浮覆盖其他应用
         sink_to_bottom(&win);
-    }
-    // 底部驻留守卫随固定状态开关
-    #[cfg(target_os = "windows")]
-    if let Ok(raw) = win.hwnd() {
-        bottom_guard::set_enabled(raw.0 as isize, !pin);
     }
     Ok(())
 }
@@ -1978,18 +1978,12 @@ pub(crate) mod bottom_guard {
             let wp = lparam.0 as *mut WINDOWPOS;
             if !wp.is_null() {
                 let wpos = &mut *wp;
-                // 只有真正的 Z 序变更才干预（SWP_NOZORDER 的纯移动放行）
-                if (wpos.flags & SWP_NOZORDER).0 == 0 {
-                    let h = wpos.hwndInsertAfter.0 as isize;
-                    let raising = h == 0 || h == -2; // HWND_TOP/NULL(0) 或 HWND_TOPMOST(-2)
-                    let to_bottom = h == -1; // HWND_BOTTOM(-1)
-                    if raising {
-                        // 任何抬升动作直接改写为沉底
-                        wpos.hwndInsertAfter = HWND_BOTTOM;
-                    } else if !to_bottom {
-                        // 其余中间位（-3 NOTOPMOST 等）也统一沉底，保证全程最下
-                        wpos.hwndInsertAfter = HWND_BOTTOM;
-                    }
+                // 只有真正的 Z 序变更才干预（SWP_NOZORDER 的纯移动放行）；
+                // 任何非沉底的目标（置顶、激活抬升等）一律改写为沉底
+                if (wpos.flags & SWP_NOZORDER).0 == 0
+                    && wpos.hwndInsertAfter.0 as isize != HWND_BOTTOM.0 as isize
+                {
+                    wpos.hwndInsertAfter = HWND_BOTTOM;
                 }
             }
         }
@@ -2303,11 +2297,6 @@ pub fn run() {
             reveal_target,
             missing_targets,
             set_dock_bottom,
-            links::resolve_pin_target,
-            system::get_audio_state,
-            system::set_audio_volume,
-            system::set_audio_mute,
-            system::get_network_status,
             clipboard::read_clipboard_state,
             clipboard::write_clipboard_text,
             clipboard::write_clipboard_files,

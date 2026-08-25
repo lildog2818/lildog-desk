@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { widgetLoad, widgetSave } from "../platform/widget-data";
+import { widgetLoad } from "../platform/widget-data";
 import { getWindowState, setPinned } from "../platform/winstate";
 import "./../styles/quota.css";
 
@@ -25,30 +25,6 @@ export async function loadQuotaConfig<T extends QuotaConfig>(
         ? d.intervalMin
         : DEFAULT_INTERVAL,
   };
-}
-
-const timers = new Map<string, number>();
-
-export function persistQuota(widgetId: string, data: unknown): void {
-  void widgetSave(widgetId, data);
-}
-
-export function schedulePoll(
-  widgetId: string,
-  fn: () => void,
-): () => void {
-  stopPoll(widgetId);
-  const h = window.setInterval(fn, 60_000);
-  timers.set(widgetId, h);
-  return () => stopPoll(widgetId);
-}
-
-function stopPoll(widgetId: string): void {
-  const h = timers.get(widgetId);
-  if (h !== undefined) {
-    window.clearInterval(h);
-    timers.delete(widgetId);
-  }
 }
 
 export interface UsageWindow {

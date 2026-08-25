@@ -7,6 +7,11 @@
   font-size: var(--fs-title);
   font-weight: 650;
   letter-spacing: 0.4px;
+  /* 窄窗口时截断标题，避免挤压右侧按钮造成视觉重叠 */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .qw-body {

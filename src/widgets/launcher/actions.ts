@@ -143,9 +143,8 @@ function activeGroupId(): string {
 /**
  * 通用「从开始菜单选应用」选择器：isAdded 决定已添加置灰态，
  * onPick 在用户选中某个应用时回调；browse 提供时才显示"浏览文件…"按钮。
- * 任务栏等外部组件复用此入口，不必触碰 launcher 的 store。
  */
-export function showAppPicker(opts: {
+function showAppPicker(opts: {
   isAdded: (target: string) => boolean;
   onPick: (a: AppEntry) => void;
   browse?: () => void;

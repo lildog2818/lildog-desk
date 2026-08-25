@@ -51,8 +51,6 @@ export const setCollapsed = (collapsed: boolean): Promise<void> =>
 export const setBgOpacity = (opacity: number): Promise<void> =>
   invoke("set_bg_opacity", { opacity });
 
-export const setGlass = (v: number): Promise<void> => invoke("set_glass", { v });
-
 export const setSizeStep = (step: number): Promise<void> =>
   invoke("set_size_step", { step });
 
@@ -88,19 +86,6 @@ export const openWidgetWindow = (
   height: number,
 ): Promise<void> =>
   invoke("open_widget_window", {
-    widgetId,
-    title,
-    width,
-    height,
-  });
-
-export const toggleWidgetWindow = (
-  widgetId: string,
-  title: string,
-  width: number,
-  height: number,
-): Promise<void> =>
-  invoke("toggle_widget_window", {
     widgetId,
     title,
     width,
