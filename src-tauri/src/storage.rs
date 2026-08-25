@@ -103,6 +103,9 @@ pub struct AppSettings {
     /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
     #[serde(default)]
     pub clip_dir: Option<String>,
+    /// 底部停靠模式：所有未固定的小组件对齐到屏幕底部（工作区底边），像停靠栏
+    #[serde(default)]
+    pub dock_bottom: Option<bool>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
@@ -132,6 +135,11 @@ impl AppSettings {
 
     pub fn size_step(&self) -> u32 {
         self.size_step.unwrap_or(48).clamp(8, 200)
+    }
+
+    /// 底部停靠模式（默认关闭）
+    pub fn global_dock_bottom(&self) -> bool {
+        self.dock_bottom.unwrap_or(false)
     }
 
     /// 可读性增强级别：优先新字段，缺省按旧布尔开关推断（开=std 关=off）

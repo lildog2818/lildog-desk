@@ -5,6 +5,7 @@ import {
   getWindowState,
   setAutostart,
   setBgOpacity,
+  setDockBottom,
   setFontSizes,
   setTextEffect,
   setTheme,
@@ -276,6 +277,27 @@ export function autostartRow(): HTMLDivElement {
   return autoRow;
 }
 
+/** 底部停靠模式：未固定的小组件对齐排布到屏幕底部（工作区底边），像停靠栏 */
+export function dockRow(initial: boolean): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "auto-row";
+  const label = document.createElement("span");
+  label.textContent = "底部停靠";
+  label.title = "未固定的小组件对齐排布到屏幕底部（任务栏上方），像停靠栏一样；固定（置顶）的组件不受影响";
+  const toggle = document.createElement("button");
+  toggle.className = "auto-toggle";
+  toggle.classList.toggle("on", initial);
+  toggle.setAttribute("aria-pressed", String(initial));
+  toggle.onclick = () => {
+    const next = !toggle.classList.contains("on");
+    toggle.classList.toggle("on", next);
+    toggle.setAttribute("aria-pressed", String(next));
+    void setDockBottom(next).catch((e) => toast(String(e)));
+  };
+  row.append(label, toggle);
+  return row;
+}
+
 /** 弹窗内分组标题 */
 function sectionLabel(text: string): HTMLDivElement {
   const el = document.createElement("div");
@@ -403,6 +425,8 @@ export async function buildAppearancePop(
     pop.appendChild(readabilityRow(st.textEffect ?? "std"));
     // 原生任务栏替换无独立调节框：开启后跟随上面的面板透明度与背景颜色
     if (withAutostart) pop.appendChild(autostartRow());
+    // 底部停靠：未固定的小组件贴到屏幕底部，像停靠栏
+    pop.appendChild(dockRow(st.dockBottom ?? false));
   } catch {
     /* window state unavailable */
   }

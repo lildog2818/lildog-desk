@@ -15,6 +15,8 @@ export interface WinState {
   fontSizeTitle?: number;
   fontSizeSmall?: number;
   fontSizeValue?: number;
+  /** 底部停靠模式（全局）：未固定的小组件对齐到工作区底边 */
+  dockBottom?: boolean;
 }
 
 export interface ThemeCfg {
@@ -53,6 +55,9 @@ export const setGlass = (v: number): Promise<void> => invoke("set_glass", { v })
 
 export const setSizeStep = (step: number): Promise<void> =>
   invoke("set_size_step", { step });
+
+export const setDockBottom = (enable: boolean): Promise<void> =>
+  invoke("set_dock_bottom", { enable });
 
 export const setTheme = (theme: ThemeCfg): Promise<void> =>
   invoke("set_theme", {

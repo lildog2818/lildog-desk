@@ -91,6 +91,8 @@ struct AppState {
     shot_target: Mutex<u8>,
     /// 已注册的全局热键：shortcut -> 用途（1/2/3）
     hotkey_map: Mutex<Vec<(tauri_plugin_global_shortcut::Shortcut, u8)>>,
+    /// 底部停靠模式：未固定的小组件对齐到各自显示器的工作区底边
+    dock_bottom: Mutex<bool>,
 }
 
 // ---------------- 小组件数据 ----------------
@@ -140,6 +142,7 @@ async fn get_window_state(
         "fontSizeTitle": settings.font_size_title(),
         "fontSizeSmall": settings.font_size_small(),
         "fontSizeValue": settings.font_size_value(),
+        "dockBottom": settings.global_dock_bottom(),
     }))
 }
 
@@ -492,6 +495,10 @@ fn ensure_widget_window(
     // 未固定的小组件沉到最底层，不悬浮覆盖其他应用
     if !st.pinned {
         sink_to_bottom(&win);
+        // 底部停靠模式：重排所有未固定组件到工作区底边
+        if *app.state::<AppState>().dock_bottom.lock().unwrap() {
+            apply_dock_layout(app);
+        }
     }
     Ok(())
 }
@@ -1550,6 +1557,194 @@ fn missing_targets(paths: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+// ---------------- 底部停靠模式 ----------------
+//
+// 开启后，所有未固定的小组件窗口对齐到所在显示器的工作区底边（任务栏之上），
+// 像桌面停靠栏一样排成一排；仍保持在 Z 序最底层，不悬浮覆盖其他应用。
+
+/// 窗口所在显示器的工作区（不含任务栏）物理坐标；非 Windows 返回 None
+#[cfg(target_os = "windows")]
+fn work_area_of(win: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let hwnd = HWND(win.hwnd().ok()?.0);
+    let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFO::default();
+    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let ok = unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool();
+    ok.then(|| {
+        (
+            mi.rcWork.left,
+            mi.rcWork.top,
+            mi.rcWork.right,
+            mi.rcWork.bottom,
+        )
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn work_area_of(_win: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+/// 仅把窗口贴回所在显示器工作区底边（水平位置不动），供拖动后保持贴底
+#[cfg(target_os = "windows")]
+fn dock_glue_y(win: &WebviewWindow) {
+    const MARGIN: i32 = 4;
+    let Some((_, _, _, wb)) = work_area_of(win) else {
+        return;
+    };
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    let h = size.height as i32;
+    let y = wb - MARGIN - h;
+    if y != pos.y {
+        let _ = win.set_position(PhysicalPosition::new(pos.x, y));
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dock_glue_y(_win: &WebviewWindow) {}
+
+/// 把所有可见且未固定的组件窗口排布到各自显示器工作区底边（从左到右，超宽时叠行）
+pub fn apply_dock_layout(app: &AppHandle) {
+    if !*app.state::<AppState>().dock_bottom.lock().unwrap() {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::collections::BTreeMap;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+
+        const GAP: i32 = 8;
+        const MARGIN: i32 = 4;
+        const MAX_ROWS: usize = 2;
+
+        struct Entry {
+            label: String,
+            w: i32,
+            h: i32,
+            x: i32,
+        }
+
+        let mut groups: BTreeMap<(i32, i32, i32, i32), Vec<Entry>> = BTreeMap::new();
+        for (label, win) in app.webview_windows() {
+            if !label.starts_with("w-") || !win.is_visible().unwrap_or(false) {
+                continue;
+            }
+            if app
+                .state::<AppState>()
+                .pinned_set
+                .lock()
+                .unwrap()
+                .contains(&label)
+            {
+                continue;
+            }
+            let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+                continue;
+            };
+            if size.width == 0 || size.height == 0 {
+                continue;
+            }
+            let key = {
+                let Ok(raw) = win.hwnd() else {
+                    continue;
+                };
+                let hwnd = HWND(raw.0);
+                let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+                let mut mi = MONITORINFO::default();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if !unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool() {
+                    continue;
+                }
+                (mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom)
+            };
+            groups.entry(key).or_default().push(Entry {
+                label,
+                w: size.width as i32,
+                h: size.height as i32,
+                x: pos.x,
+            });
+        }
+
+        struct Row {
+            base_y: i32,
+            cursor: i32,
+            max_h: i32,
+        }
+
+        for ((wl, _wt, wr, wb), mut entries) in groups {
+            entries.sort_by_key(|e| e.x);
+            let mut rows: Vec<Row> = vec![Row {
+                base_y: wb - MARGIN,
+                cursor: wl + MARGIN,
+                max_h: 0,
+            }];
+            for e in entries {
+                // 找能放下当前宽度的行；放不下且行数未满则在其上方开新行
+                let idx = rows
+                    .iter()
+                    .position(|r| r.cursor + e.w <= wr - MARGIN)
+                    .unwrap_or_else(|| {
+                        if rows.len() < MAX_ROWS {
+                            let top_base = rows
+                                .iter()
+                                .map(|r| r.base_y - r.max_h)
+                                .min()
+                                .unwrap_or(wb - MARGIN);
+                            rows.push(Row {
+                                base_y: top_base - GAP,
+                                cursor: wl + MARGIN,
+                                max_h: 0,
+                            });
+                            rows.len() - 1
+                        } else {
+                            // 行数已满：留在最后一行左侧起排，直至溢出
+                            0
+                        }
+                    });
+                let r = &mut rows[idx];
+                let x = r.cursor;
+                let y = r.base_y - e.h;
+                r.cursor = x + e.w + GAP;
+                r.max_h = r.max_h.max(e.h);
+                if let Some(w) = app.get_webview_window(&e.label) {
+                    let _ = w.set_position(PhysicalPosition::new(x, y));
+                    sink_to_bottom(&w);
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
+}
+
+/// 开关底部停靠模式：保存设置、立即应用排布并广播给前端
+#[tauri::command]
+async fn set_dock_bottom(app: AppHandle, enable: bool) -> Result<(), String> {
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.dock_bottom = Some(enable);
+    storage::save_settings(&dir, &s);
+    *app.state::<AppState>().dock_bottom.lock().unwrap() = enable;
+    if enable {
+        apply_dock_layout(&app);
+    }
+    let _ = app.emit("dock-bottom", enable);
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn shell_open_error(code: isize) -> String {
     let msg = match code {
@@ -1732,6 +1927,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     *app.state::<AppState>().glass_value.lock().unwrap() = settings.global_glass();
     *app.state::<AppState>().size_step.lock().unwrap() = settings.size_step();
+    *app.state::<AppState>().dock_bottom.lock().unwrap() = settings.global_dock_bottom();
 
     if let Ok(sz) = win.inner_size() {
         let scale = win.scale_factor().unwrap_or(1.0);
@@ -1963,6 +2159,7 @@ pub fn run() {
             open_target,
             reveal_target,
             missing_targets,
+            set_dock_bottom,
             links::resolve_pin_target,
             system::get_audio_state,
             system::set_audio_volume,
@@ -2041,6 +2238,16 @@ pub fn run() {
                         } else {
                             state.pending_snap.lock().unwrap().remove(&label);
                             hide_preview_if_idle(app);
+                        }
+                    }
+                    // 底部停靠模式：拖动结束/过程中保持贴在工作区底边
+                    if *app.state::<AppState>().dock_bottom.lock().unwrap()
+                        && !pinned
+                        && !resizing_active
+                        && !programmatic
+                    {
+                        if let Some(w) = app.get_webview_window(&label) {
+                            dock_glue_y(&w);
                         }
                     }
                 }
