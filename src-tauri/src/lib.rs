@@ -252,6 +252,11 @@ async fn set_pinned(
         // 解除固定后沉回最底层，不悬浮覆盖其他应用
         sink_to_bottom(&win);
     }
+    // 底部驻留守卫随固定状态开关
+    #[cfg(target_os = "windows")]
+    if let Ok(raw) = win.hwnd() {
+        bottom_guard::set_enabled(raw.0 as isize, !pin);
+    }
     Ok(())
 }
 
@@ -409,8 +414,21 @@ fn ensure_widget_window(
         return Err("非法的组件 id".into());
     }
     if let Some(existing) = app.get_webview_window(&label) {
+        let dir = storage::data_dir(app);
+        let st = storage::load_settings(&dir).window(&label);
+        #[cfg(target_os = "windows")]
+        if let Ok(raw) = existing.hwnd() {
+            bottom_guard::register(raw.0 as isize);
+            bottom_guard::set_enabled(raw.0 as isize, !st.pinned);
+        }
         let _ = existing.show();
         let _ = existing.set_focus();
+        if !st.pinned {
+            sink_to_bottom(&existing);
+            if *app.state::<AppState>().dock_bottom.lock().unwrap() {
+                apply_dock_layout(app);
+            }
+        }
         return Ok(());
     }
 
@@ -492,6 +510,12 @@ fn ensure_widget_window(
 
     let _ = win.show();
     let _ = win.set_focus();
+    // 底部驻留守卫：未固定时确保"全程沉底"已登记
+    #[cfg(target_os = "windows")]
+    if let Ok(raw) = win.hwnd() {
+        bottom_guard::register(raw.0 as isize);
+        bottom_guard::set_enabled(raw.0 as isize, !st.pinned);
+    }
     // 未固定的小组件沉到最底层，不悬浮覆盖其他应用
     if !st.pinned {
         sink_to_bottom(&win);
@@ -1885,6 +1909,100 @@ fn sink_to_bottom(win: &WebviewWindow) {
 #[cfg(not(target_os = "windows"))]
 fn sink_to_bottom(_win: &WebviewWindow) {}
 
+/// 底部驻留守卫：子类化窗口过程，拦截一切"把窗口抬到前台"的 Z 序变更，
+/// 直接改写成沉底。这样未固定的小组件即使被点击/激活也全程处于最底层，
+/// 不会出现"先置顶、再沉回"的闪烁。
+#[cfg(target_os = "windows")]
+pub(crate) mod bottom_guard {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, LazyLock, Mutex};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, HWND_BOTTOM, SWP_NOZORDER,
+        WM_NCDESTROY, WM_WINDOWPOSCHANGING, WINDOWPOS,
+    };
+
+    type OldProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
+    type Flag = Arc<AtomicBool>;
+
+    static REG: LazyLock<Mutex<HashMap<isize, (OldProc, Flag)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    /// 登记窗口并启用"全程沉底"；返回 false 表示该 hwnd 已登记或登记失败
+    pub fn register(hwnd_key: isize) -> bool {
+        let mut reg = match REG.lock() {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        if reg.contains_key(&hwnd_key) {
+            return false;
+        }
+        let hwnd = HWND(hwnd_key as *mut _);
+        unsafe {
+            let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, sub_proc as *const () as isize);
+            if old == 0 {
+                return false;
+            }
+            reg.insert(
+                hwnd_key,
+                (
+                    std::mem::transmute::<isize, OldProc>(old),
+                    Arc::new(AtomicBool::new(true)),
+                ),
+            );
+        }
+        true
+    }
+
+    /// 切换守卫开关：pin=true（置顶）时关闭，解除固定时重新开启
+    pub fn set_enabled(hwnd_key: isize, on: bool) {
+        if let Some((_, flag)) = REG.lock().ok().and_then(|r| r.get(&hwnd_key).cloned()) {
+            flag.store(on, Ordering::Relaxed);
+        }
+    }
+
+    unsafe extern "system" fn sub_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        let key = hwnd.0 as isize;
+        let entry = REG.lock().unwrap().get(&key).cloned();
+        let Some((old, flag)) = entry else {
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        };
+
+        if msg == WM_WINDOWPOSCHANGING && flag.load(Ordering::Relaxed) {
+            let wp = lparam.0 as *mut WINDOWPOS;
+            if !wp.is_null() {
+                let wpos = &mut *wp;
+                // 只有真正的 Z 序变更才干预（SWP_NOZORDER 的纯移动放行）
+                if (wpos.flags & SWP_NOZORDER).0 == 0 {
+                    let h = wpos.hwndInsertAfter.0 as isize;
+                    let raising = h == 0 || h == -2; // HWND_TOP/NULL(0) 或 HWND_TOPMOST(-2)
+                    let to_bottom = h == -1; // HWND_BOTTOM(-1)
+                    if raising {
+                        // 任何抬升动作直接改写为沉底
+                        wpos.hwndInsertAfter = HWND_BOTTOM;
+                    } else if !to_bottom {
+                        // 其余中间位（-3 NOTOPMOST 等）也统一沉底，保证全程最下
+                        wpos.hwndInsertAfter = HWND_BOTTOM;
+                    }
+                }
+            }
+        }
+
+        if msg == WM_NCDESTROY {
+            let _ = old(hwnd, msg, wparam, lparam);
+            REG.lock().unwrap().remove(&key);
+            return LRESULT(0);
+        }
+        old(hwnd, msg, wparam, lparam)
+    }
+}
+
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let dir = storage::data_dir(app.handle());
     storage::migrate(&dir);
@@ -1924,6 +2042,18 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .lock()
             .unwrap()
             .insert("main".into(), (pos.x, pos.y));
+    }
+    // 恢复主窗口（控制台）上次退出前的大小；过小视为脏数据回退默认
+    {
+        let w = match main_state.width {
+            Some(w) if w >= 320.0 => w,
+            _ => 400.0,
+        };
+        let h = match main_state.height {
+            Some(h) if h >= 240.0 => h,
+            _ => 620.0,
+        };
+        let _ = win.set_size(LogicalSize::new(w, h));
     }
     *app.state::<AppState>().glass_value.lock().unwrap() = settings.global_glass();
     *app.state::<AppState>().size_step.lock().unwrap() = settings.size_step();
@@ -2079,6 +2209,19 @@ fn toggle_main_visible(app: &AppHandle) {
         } else {
             let _ = win.show();
             let _ = win.set_focus();
+            // 每次打开都复位为记录尺寸，防止隐藏/显示期间尺寸漂移累积
+            if let Some((w, h)) = app
+                .state::<AppState>()
+                .latest_size
+                .lock()
+                .unwrap()
+                .get("main")
+                .copied()
+            {
+                if w >= 320.0 && h >= 240.0 {
+                    let _ = win.set_size(LogicalSize::new(w, h));
+                }
+            }
         }
     }
 }
@@ -2260,6 +2403,10 @@ pub fn run() {
                 if is_chromeless_label(&label) {
                     return;
                 }
+                // 隐藏期间的过渡尺寸不记录、不参与吸附（防止隐藏/显示产生尺寸漂移）
+                if !window.is_visible().unwrap_or(true) {
+                    return;
+                }
                 let win = app.get_webview_window(&label);
                 if let Some(ref w) = win {
                     clamp_size_into_monitors(w);
@@ -2276,8 +2423,9 @@ pub fn run() {
                         .insert(label.clone(), (lw, lh));
 
                     let state = app.state::<AppState>();
-                    // 程序化改尺寸（折叠/展开）不参与阶梯吸附，只记录尺寸
-                    if !is_programmatic_resize(&state, &label) {
+                    // 程序化改尺寸（折叠/展开）不参与阶梯吸附，只记录尺寸；
+                    // 尺寸阶梯吸附仅对小组件窗口生效（主窗口不参与网格吸附）
+                    if !is_programmatic_resize(&state, &label) && label.starts_with("w-") {
                     // 预览式尺寸阶梯：拖动过程零干预，实时显示量化目标预览框，
                     // 松开鼠标左键后由监听线程一次性落位
                     let step = *state.size_step.lock().unwrap();
