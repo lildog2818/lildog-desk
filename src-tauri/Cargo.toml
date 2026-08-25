@@ -1,11 +1,14 @@
 [package]
 name = "lildog-desk"
-version = "0.9.6"
+version = "0.9.7"
 edition = "2021"
 
 [lib]
 name = "lildog_desk_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
