@@ -14,7 +14,6 @@ import "./widgets/deepseek-balance";
 import "./widgets/memo";
 import "./widgets/clipboard";
 import "./widgets/taskbar";
-import { mountTaskbarPanel } from "./widgets/taskbar/panel";
 
 installGlobalDismiss();
 initAppearance();
@@ -28,12 +27,6 @@ async function route(): Promise<void> {
   // 吸附预览层：仅渲染一个虚线框
   if (label === "snap-preview") {
     app.innerHTML = '<div id="snap-preview-box"></div>';
-    return;
-  }
-
-  // 快捷设置面板（任务栏弹出层）
-  if (label === "taskbar-panel") {
-    void mountTaskbarPanel(app);
     return;
   }
 

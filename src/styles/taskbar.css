@@ -1,341 +1,55 @@
-/* ---- 任务栏组件（body.tb-body 由 widgets/taskbar 挂载时添加） ---- */
-/* 系统任务栏风格：图标按钮无文字、整体居中；右侧系统图标 + 时钟 */
+/* ---- 任务栏小组件（原生任务栏风格替换开关卡） ---- */
+/* 卡片本身只是参数面板；真正的替换逻辑在后端 nativebar 模块 */
 
 body.tb-body #app {
-  flex-direction: row;
-  align-items: stretch;
-  border-radius: 12px;
+  padding: 12px;
 }
 
-#tb-wrap {
+.tbc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.tbc-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  padding: 0 10px;
-}
-
-/* 居中图标区：固定应用 + 运行中窗口 */
-#tb-center {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-  height: 100%;
-}
-
-.tb-strip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.tb-strip::-webkit-scrollbar {
-  display: none;
-}
-
-.tb-sep {
-  width: 1px;
-  height: 26px;
-  flex-shrink: 0;
-  background: var(--stroke);
-}
-
-/* 图标方按钮（固定项 / 运行窗口 / 系统图标通用） */
-.tb-btn {
-  position: relative;
-  width: 46px;
-  height: 46px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.tb-btn:hover {
-  background: var(--hover);
-  border-color: var(--stroke);
-}
-
-/* 图标统一 26px 居中 */
-.tb-btn img,
-.tb-btn .tb-ico {
-  width: 26px;
-  height: 26px;
-  object-fit: contain;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tb-btn .tb-ico svg {
-  width: 22px;
-  height: 22px;
-  fill: var(--text-dim);
-}
-
-/* 固定项运行态：底部亮条 */
-.tb-pin.running::after {
-  content: "";
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(150deg, #ffb84d, #ff8a3d);
-  box-shadow: 0 0 7px rgba(255, 184, 77, 0.75);
-}
-
-/* 运行窗口：前台高亮、最小化弱化 */
-.tb-task.active {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: var(--stroke-strong);
-}
-
-.tb-task.mined {
-  opacity: 0.5;
-}
-
-/* 右侧系统区 */
-#tb-right {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.tb-btn.sys {
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
-}
-
-.tb-btn.sys svg {
-  width: 19px;
-  height: 19px;
-  fill: currentColor;
-  stroke: none;
-}
-
-.tb-btn.sys .wave {
-  fill: none;
-  stroke: currentColor;
-}
-
-.tb-btn.sys.muted {
-  color: var(--text-dim);
-}
-
-#tb-clock {
-  text-align: right;
-  line-height: 1.22;
-  padding: 3px 8px;
-  border-radius: 9px;
-  cursor: default;
-}
-
-#tb-time {
-  font-size: calc(var(--fs-value) + 0.5px);
+  font-size: var(--fs-ui);
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
-#tb-date {
+.tbc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.75);
+  flex-shrink: 0;
+}
+
+.tbc .pop-section {
+  margin-top: 2px;
+  padding-top: 0;
+  border-top: none;
+  letter-spacing: 0.5px;
+}
+
+.tbc .auto-row {
+  margin-top: 0;
+}
+
+.tbc .opacity-head {
+  margin-bottom: 6px;
+}
+
+.tbc-hint {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--stroke);
   font-size: calc(var(--fs-small) - 0.5px);
   color: var(--text-dim);
-}
-
-.tb-btn.sys.offline {
-  opacity: 0.45;
-}
-
-/* 显示桌面：最右侧细条（Windows 惯例位置） */
-#tb-desktop {
-  width: 7px;
-  height: 34px;
-  margin-left: 4px;
-  flex-shrink: 0;
-  border-radius: 3px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-}
-
-#tb-desktop:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-/* ---- 快捷设置面板（taskbar-panel 窗口） ---- */
-
-body.tb-panel-body #app {
-  padding: 10px;
-}
-
-.tb-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  height: 100%;
-  padding: 14px;
-  border-radius: 14px;
-  background:
-    linear-gradient(155deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015) 55%),
-    linear-gradient(155deg, rgba(var(--bg-c1), calc(var(--panel-a, 0.55) * 1.3)), rgba(var(--bg-c2), calc(var(--panel-a, 0.55) * 1.35)) 55%, rgba(var(--bg-c3), calc(var(--panel-a, 0.55) * 1.3)));
-  border: 1px solid var(--stroke);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
-}
-
-.tb-tiles {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.tb-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 14px 6px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text);
-  cursor: pointer;
-  min-width: 0;
-}
-
-.tb-tile:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.tb-tile.off {
-  opacity: 0.55;
-}
-
-.tb-tile-ico {
-  width: 22px;
-  height: 22px;
-}
-
-.tb-tile-ico svg {
-  width: 22px;
-  height: 22px;
-  fill: var(--text);
-}
-
-.tb-tile-name {
-  font-size: var(--fs-small);
-  font-weight: 600;
-}
-
-.tb-tile-sub {
-  max-width: 100%;
-  font-size: calc(var(--fs-small) - 1px);
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tb-volrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 2px;
-}
-
-.tb-mute {
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.tb-mute:hover {
-  background: var(--hover);
-  border-color: var(--stroke);
-}
-
-.tb-mute svg {
-  width: 19px;
-  height: 19px;
-  fill: currentColor;
-}
-
-.tb-mute.muted {
-  color: var(--text-dim);
-}
-
-.tb-volslider {
-  flex: 1;
-}
-
-.tb-panel-foot {
-  margin-top: auto;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.tb-gear {
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.tb-gear:hover {
-  background: var(--hover);
-  border-color: var(--stroke);
-  color: var(--text);
-}
-
-.tb-gear svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-
-/* picker 模式下对话框在面板内居中且完整可见 */
-.tb-panel .dialog {
-  position: fixed;
-  inset: 0;
-  width: auto;
-  max-width: none;
-  margin: auto;
-  height: fit-content;
-  max-height: calc(100% - 20px);
-}
-
-.tb-panel .picker-list {
-  max-height: 240px;
+  line-height: 1.7;
 }
