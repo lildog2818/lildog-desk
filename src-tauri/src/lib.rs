@@ -246,6 +246,8 @@ async fn set_pinned(
         state.pinned_set.lock().unwrap().insert(label);
     } else {
         state.pinned_set.lock().unwrap().remove(&label);
+        // 解除固定后沉回最底层，不悬浮覆盖其他应用
+        sink_to_bottom(&win);
     }
     Ok(())
 }
@@ -487,6 +489,10 @@ fn ensure_widget_window(
 
     let _ = win.show();
     let _ = win.set_focus();
+    // 未固定的小组件沉到最底层，不悬浮覆盖其他应用
+    if !st.pinned {
+        sink_to_bottom(&win);
+    }
     Ok(())
 }
 
@@ -1655,6 +1661,35 @@ fn round_window_corners(win: &WebviewWindow) {
     }
 }
 
+/// 把窗口沉到 Z 序最底层（桌面小组件风格）：位于所有应用窗口之下、桌面之上。
+/// 未固定的小组件始终停留在最下层，不悬浮覆盖其他应用的表面。
+#[cfg(target_os = "windows")]
+fn sink_to_bottom(win: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+
+    let Ok(raw) = win.hwnd() else {
+        return;
+    };
+    let hwnd = HWND(raw.0);
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_BOTTOM),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sink_to_bottom(_win: &WebviewWindow) {}
+
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let dir = storage::data_dir(app.handle());
     storage::migrate(&dir);
@@ -2119,11 +2154,38 @@ pub fn run() {
                 }
                 schedule_save(app);
             }
-            WindowEvent::Focused(_focused) => {
+            WindowEvent::Focused(focused) => {
                 let app = window.app_handle();
                 let label = window.label();
                 #[cfg(target_os = "windows")]
                 reapply_glass_async(app, label);
+                // 未固定的组件窗口：点击/激活会被系统抬升，短暂延迟后沉回最底层
+                if *focused
+                    && label.starts_with("w-")
+                    && !app
+                        .state::<AppState>()
+                        .pinned_set
+                        .lock()
+                        .unwrap()
+                        .contains(label)
+                {
+                    let app2 = app.clone();
+                    let lbl = label.to_string();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(160));
+                        let pinned = app2
+                            .state::<AppState>()
+                            .pinned_set
+                            .lock()
+                            .unwrap()
+                            .contains(&lbl);
+                        if !pinned {
+                            if let Some(w) = app2.get_webview_window(&lbl) {
+                                sink_to_bottom(&w);
+                            }
+                        }
+                    });
+                }
             }
             _ => {}
         })
