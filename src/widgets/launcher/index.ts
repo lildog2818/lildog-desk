@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
@@ -17,8 +17,11 @@ import {
   fetchIcon,
   groupMenu,
   importPaths,
+  isMissingTarget,
   itemMenu,
   openAppPicker,
+  openItem,
+  refreshMissingTargets,
 } from "./actions";
 import {
   loadLauncherData,
@@ -232,6 +235,9 @@ function tileEl(item: Item): HTMLDivElement {
   tile.className = "tile";
   tile.dataset.id = item.id;
 
+  const missing = isMissingTarget(item.target);
+  if (missing) tile.classList.add("missing");
+
   if (item.icon) {
     const img = document.createElement("img");
     img.src = convertFileSrc(item.icon);
@@ -248,15 +254,13 @@ function tileEl(item: Item): HTMLDivElement {
   const label = document.createElement("div");
   label.className = "tile-label";
   label.textContent = item.name;
-  label.title = item.name;
+  label.title = missing
+    ? `${item.name}\n${item.target}\n（目标不存在，点击将自动查找）`
+    : item.target;
   tile.appendChild(label);
 
   tile.onclick = () => {
-    if (!didDrag) {
-      void invoke("open_target", { target: item.target }).catch((e) =>
-        toast(String(e)),
-      );
-    }
+    if (!didDrag) openItem(item);
   };
   tile.oncontextmenu = (ev) => {
     ev.preventDefault();
@@ -355,6 +359,7 @@ async function mountLauncher(root: HTMLElement): Promise<() => void> {
   const e = els;
 
   await loadLauncherData();
+  void refreshMissingTargets();
   try {
     const st = await getWindowState();
     winPinned = st.pinned;

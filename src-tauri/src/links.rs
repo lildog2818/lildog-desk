@@ -125,6 +125,111 @@ pub(crate) fn inner_target(
 
 const JUNK_MARKERS: [&str; 3] = ["uninstall", "uninst", "卸载"];
 
+/// 快捷方式可能仍存在的常见位置：用户桌面（含重定向）、公共桌面、
+/// 用户与公共开始菜单。用于"原路径被清理/移动"后的同名兜底查找。
+#[cfg(target_os = "windows")]
+fn known_search_dirs() -> Vec<PathBuf> {
+    use windows::Win32::UI::Shell::{
+        FOLDERID_CommonPrograms, FOLDERID_Desktop, FOLDERID_Programs,
+        FOLDERID_PublicDesktop,
+    };
+
+    fn folder(id: &windows::core::GUID, env_fallback: &[(&str, &[&str])]) -> Option<PathBuf> {
+        unsafe {
+            let pwz = windows::Win32::UI::Shell::SHGetKnownFolderPath(
+                id,
+                windows::Win32::UI::Shell::KNOWN_FOLDER_FLAG(0),
+                None,
+            )
+            .ok()?;
+            let s = pwz.to_string().ok();
+            windows::Win32::System::Com::CoTaskMemFree(Some(pwz.0.cast()));
+            s.map(PathBuf::from)
+        }
+        .or_else(|| {
+            env_fallback.iter().find_map(|(var, tail)| {
+                let base = std::env::var_os(var)?;
+                let mut p = PathBuf::from(base);
+                for t in *tail {
+                    p.push(t);
+                }
+                p.is_dir().then_some(p)
+            })
+        })
+    }
+
+    [
+        folder(&FOLDERID_Desktop, &[("USERPROFILE", &["Desktop"])]),
+        folder(
+            &FOLDERID_PublicDesktop,
+            &[("PUBLIC", &["Desktop"])],
+        ),
+        folder(
+            &FOLDERID_Programs,
+            &[("APPDATA", &["Microsoft", "Windows", "Start Menu", "Programs"])],
+        ),
+        folder(
+            &FOLDERID_CommonPrograms,
+            &[("PROGRAMDATA", &["Microsoft", "Windows", "Start Menu", "Programs"])],
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn known_search_dirs() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+fn find_named(dir: &Path, name: &str, depth: usize) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
+    let rd = fs::read_dir(dir).ok()?;
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(hit) = find_named(&path, name, depth + 1) {
+                return Some(hit);
+            }
+            continue;
+        }
+        let hit = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_lowercase() == name)
+            .unwrap_or(false);
+        if hit {
+            return Some(path.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// 打开/定位失败时的兜底：目标文件已不在原位（桌面清理、应用升级换路径等），
+/// 按同名文件在桌面与开始菜单中重新查找。仅对 .lnk/.url 生效，避免误开无关文档。
+pub fn rediscover_shortcut(target: &str) -> Option<String> {
+    let p = Path::new(target);
+    if p.exists() {
+        return Some(target.to_string());
+    }
+    let name = p.file_name()?.to_string_lossy().to_lowercase();
+    if !(name.ends_with(".lnk") || name.ends_with(".url")) {
+        return None;
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    for dir in known_search_dirs() {
+        if !seen.insert(dir.to_string_lossy().to_lowercase()) {
+            continue;
+        }
+        if let Some(found) = find_named(&dir, &name, 0) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub fn collect_start_menu_apps() -> Vec<Resolved> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(p) = std::env::var_os("APPDATA") {

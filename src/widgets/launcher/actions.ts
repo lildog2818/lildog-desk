@@ -32,6 +32,9 @@ export const PALETTE = [
 const iconPending = new Set<string>();
 const iconFailed = new Set<string>();
 
+// 目标已失效（文件被删除/移动）的条目集合：key 为小写 target
+const missingTargets = new Set<string>();
+
 let renderHook: () => void = () => {};
 
 export function bindRender(fn: () => void): void {
@@ -319,21 +322,72 @@ export function addGroup(): void {
   });
 }
 
-function openItem(item: Item): void {
-  void invoke("open_target", { target: item.target }).catch((e) =>
-    toast(String(e)),
-  );
+export function openItem(item: Item): void {
+  void invoke<string | null>("open_target", { target: item.target })
+    .then((resolved) => healTarget(item, resolved))
+    .catch((e) => {
+      if (String(e).includes("目标已不存在")) {
+        missingTargets.add(item.target.toLowerCase());
+        requestRender();
+      }
+      toast(String(e));
+    });
 }
 
 function revealItem(item: Item): void {
-  void invoke("reveal_target", { target: item.target }).catch((e) =>
-    toast(String(e)),
-  );
+  void invoke<string | null>("reveal_target", { target: item.target })
+    .then((resolved) => healTarget(item, resolved))
+    .catch((e) => toast(String(e)));
+}
+
+/** 后端自动重定位到新路径时回写条目并刷新图标，避免每次点击都兜底查找 */
+function healTarget(item: Item, resolved: string | null | undefined): void {
+  if (!resolved || resolved === item.target) return;
+  missingTargets.delete(item.target.toLowerCase());
+  iconFailed.delete(resolved.toLowerCase());
+  item.target = resolved;
+  scheduleSave();
+  void fetchIcon(resolved);
+  toast(`「${item.name}」已重新定位到新位置`);
+}
+
+export function isMissingTarget(target: string): boolean {
+  return missingTargets.has(target.toLowerCase());
+}
+
+/** 批量核对条目目标是否存在，用于失效灰显标记 */
+export async function refreshMissingTargets(): Promise<void> {
+  const targets = [...new Set(state.data.items.map((i) => i.target))];
+  try {
+    const gone = targets.length
+      ? await invoke<string[]>("missing_targets", { paths: targets })
+      : [];
+    missingTargets.clear();
+    for (const g of gone) missingTargets.add(g.toLowerCase());
+  } catch {
+    /* 核对失败时保持现状 */
+  }
+  requestRender();
+}
+
+/** 手动设置条目目标路径：去引号、去重，清除旧图标并重新获取 */
+function setItemPath(item: Item, raw: string): void {
+  const t = raw.trim().replace(/^"(.*)"$/, "$1").trim();
+  if (!t || t === item.target) return;
+  missingTargets.delete(item.target.toLowerCase());
+  iconFailed.delete(item.target.toLowerCase());
+  item.target = t;
+  item.icon = null;
+  scheduleSave();
+  requestRender();
+  void fetchIcon(t);
+  toast(`「${item.name}」路径已更新`);
 }
 
 function editDialog(item: Item): void {
   const nameInput = textInput(item.name);
   const argsInput = textInput(item.args ?? "");
+  const pathInput = textInput(item.target);
   const groupSel = document.createElement("select");
   for (const g of state.data.groups) {
     const opt = document.createElement("option");
@@ -342,13 +396,10 @@ function editDialog(item: Item): void {
     opt.selected = g.id === item.groupId;
     groupSel.appendChild(opt);
   }
-  const pathNote = document.createElement("div");
-  pathNote.className = "path-note";
-  pathNote.textContent = item.target;
 
   const fields = [
     field("名称", nameInput),
-    field("目标路径", pathNote),
+    field("目标路径（可直接修改）", pathInput),
     field("分组", groupSel),
   ];
   if (item.kind === "app") fields.push(field("启动参数（可选）", argsInput));
@@ -364,6 +415,7 @@ function editDialog(item: Item): void {
     }),
     button("取消", "", () => closeOverlays()),
     button("保存", "primary", () => {
+      setItemPath(item, pathInput.value);
       item.name = nameInput.value.trim() || item.name;
       item.groupId = groupSel.value;
       if (item.kind === "app") {
@@ -382,6 +434,26 @@ export function itemMenu(ev: MouseEvent, item: Item): void {
     { label: "打开", action: () => openItem(item) },
     { label: "打开所在位置", action: () => revealItem(item) },
     { label: "编辑…", action: () => editDialog(item) },
+    {
+      label: "手动填写路径…",
+      action: () => {
+        const input = textInput(item.target);
+        const ok = () => {
+          const v = input.value.trim();
+          if (v) setItemPath(item, v);
+          closeOverlays();
+        };
+        input.onkeydown = (ev) => {
+          if (ev.key === "Enter") ok();
+        };
+        modal("手动填写目标路径", [field("目标路径", input)], [
+          button("取消", "", () => closeOverlays()),
+          button("确定", "primary", ok),
+        ]);
+        input.focus();
+        input.select();
+      },
+    },
     {
       label: "移动到分组",
       sub: state.data.groups

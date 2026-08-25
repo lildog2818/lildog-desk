@@ -429,6 +429,7 @@ html:not([data-stroke="off"]) :is(#logo, #pill-logo, .qw-icon, .wcard-icon, .emp
 }
 
 .tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -437,6 +438,29 @@ html:not([data-stroke="off"]) :is(#logo, #pill-logo, .qw-icon, .wcard-icon, .emp
   border-radius: 12px;
   border: 1px solid transparent;
   cursor: pointer;
+}
+
+/* 目标已失效（快捷方式被删除/移动）的条目：灰显并加警告角标 */
+.tile.missing {
+  opacity: 0.45;
+  filter: grayscale(0.9);
+}
+
+.tile.missing::after {
+  content: "!";
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #e5484d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .tile:hover {

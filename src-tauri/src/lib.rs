@@ -6,6 +6,7 @@ mod system;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -1479,8 +1480,21 @@ async fn get_icon(app: AppHandle, path: String) -> String {
     icons::cached_icon(&app, &path).unwrap_or_default()
 }
 
+/// 打开目标。原路径已失效时先按同名在桌面/开始菜单中重新定位；
+/// 返回实际使用的路径（与入参相同或未重定位时为 None），供前端回写修正。
 #[tauri::command]
-fn open_target(target: String) -> Result<(), String> {
+fn open_target(target: String) -> Result<Option<String>, String> {
+    let mut actual = target.clone();
+    if !Path::new(&target).exists() {
+        match links::rediscover_shortcut(&target) {
+            Some(found) => actual = found,
+            None => {
+                return Err(format!(
+                    "目标已不存在，且未能在桌面/开始菜单中找到同名项：{target}"
+                ));
+            }
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -1488,10 +1502,10 @@ fn open_target(target: String) -> Result<(), String> {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-        if target.trim().is_empty() {
+        if actual.trim().is_empty() {
             return Err("目标路径为空".into());
         }
-        let wide: Vec<u16> = std::ffi::OsStr::new(&target)
+        let wide: Vec<u16> = std::ffi::OsStr::new(&actual)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -1509,16 +1523,25 @@ fn open_target(target: String) -> Result<(), String> {
         if code <= 32 {
             return Err(shell_open_error(code));
         }
-        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("xdg-open")
-            .arg(&target)
+            .arg(&actual)
             .spawn()
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
     }
+    Ok((actual != target).then_some(actual))
+}
+
+/// 列出给定路径中已不存在的项（前端用于灰显失效条目）
+#[tauri::command]
+fn missing_targets(paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .filter(|p| !Path::new(p).exists())
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -1539,21 +1562,54 @@ fn shell_open_error(code: isize) -> String {
     format!("{msg}（错误码 {code}）")
 }
 
+/// 在资源管理器中定位目标。原路径已失效时尝试同名重定位；
+/// 重定位也失败但原父目录还在时打开原目录，避免 Explorer 退回"文档"造成误导。
 #[tauri::command]
-fn reveal_target(target: String) -> Result<(), String> {
+fn reveal_target(target: String) -> Result<Option<String>, String> {
+    let mut sel = target.clone();
+    if !Path::new(&sel).exists() {
+        match links::rediscover_shortcut(&sel) {
+            Some(found) => sel = found,
+            None => {
+                match Path::new(&sel).parent() {
+                    Some(parent) if parent.is_dir() => {
+                        #[cfg(target_os = "windows")]
+                        {
+                            Command::new("explorer")
+                                .arg(parent)
+                                .spawn()
+                                .map(|_| ())
+                                .map_err(|e| e.to_string())?;
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            Command::new("xdg-open")
+                                .arg(parent)
+                                .spawn()
+                                .map(|_| ())
+                                .map_err(|e| e.to_string())?;
+                        }
+                        return Ok(None);
+                    }
+                    _ => return Err("目标已被删除或移动，无法定位所在位置".into()),
+                }
+            }
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         Command::new("explorer")
-            .raw_arg(format!("/select,\"{}\"", target))
+            .raw_arg(format!("/select,\"{sel}\""))
             .spawn()
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(not(target_os = "windows"))]
     {
-        Command::new("xdg-open").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
+        Command::new("xdg-open").arg(&sel).spawn().map(|_| ()).map_err(|e| e.to_string())?;
     }
+    Ok((sel != target).then_some(sel))
 }
 
 #[tauri::command]
@@ -1871,6 +1927,7 @@ pub fn run() {
             get_icon,
             open_target,
             reveal_target,
+            missing_targets,
             links::resolve_pin_target,
             system::get_audio_state,
             system::set_audio_volume,
