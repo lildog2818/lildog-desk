@@ -1,7 +1,6 @@
 mod clipboard;
 mod icons;
 mod links;
-mod nativebar;
 mod storage;
 mod system;
 
@@ -91,10 +90,6 @@ struct AppState {
     shot_target: Mutex<u8>,
     /// 已注册的全局热键：shortcut -> 用途（1/2/3）
     hotkey_map: Mutex<Vec<(tauri_plugin_global_shortcut::Shortcut, u8)>>,
-    /// 原生任务栏替换开关（效果参数随全局外观，无独立配置）
-    native_bar_on: Mutex<bool>,
-    /// 已应用策略的任务栏句柄 -> 策略签名（去重与退出还原依据）
-    native_painted: Mutex<HashMap<isize, u32>>,
 }
 
 // ---------------- 小组件数据 ----------------
@@ -217,8 +212,6 @@ async fn set_theme(app: AppHandle, font_color: String, bg_color: String) -> Resu
             "bgColor": s.bg_color,
         }),
     );
-    // 原生任务栏替换开启「跟随主题」时，背景色变化需立即重涂
-    nativebar::sync(&app);
     Ok(())
 }
 
@@ -312,8 +305,6 @@ fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     s.bg_opacity = Some(v);
     storage::save_settings(&dir, &s);
     let _ = app.emit("bg-opacity", v);
-    // 原生任务栏替换开启时，面板透明度变化立即重涂（与其他小组件一起调节）
-    nativebar::sync(&app);
     Ok(())
 }
 
@@ -1766,17 +1757,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）。
-    // 「任务栏」不再是悬浮窗：旧快照里的 w-taskbar 直接跳过。
+    // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）
     for ow in settings.open_windows.clone() {
-        if !valid_widget_id(&ow.id) || ow.id == "taskbar" {
+        if !valid_widget_id(&ow.id) {
             continue;
         }
         let _ = ensure_widget_window(app.handle(), &ow.id, &ow.title, 300.0, 320.0);
     }
-
-    // 原生任务栏替换：载入配置缓存并启动守护同步线程
-    nativebar::init(app.handle());
 
     Ok(())
 }
@@ -1885,8 +1872,6 @@ pub fn run() {
             open_target,
             reveal_target,
             links::resolve_pin_target,
-            nativebar::get_native_bar,
-            nativebar::set_native_bar,
             system::get_audio_state,
             system::set_audio_volume,
             system::set_audio_mute,
@@ -2090,8 +2075,6 @@ pub fn run() {
 
     app.run(|_app, _event| {
         if matches!(_event, RunEvent::Exit) {
-            // 先还原原生任务栏外观，再做常规收尾
-            nativebar::restore_all(_app);
             save_pos_now(_app);
             snapshot_open_widgets(_app);
         }

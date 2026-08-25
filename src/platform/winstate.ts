@@ -107,14 +107,3 @@ export const closeWidgetWindow = (widgetId: string): Promise<void> =>
 
 export const updateTrayWidgets = (items: TrayItem[]): Promise<void> =>
   invoke("update_tray_widgets", { items });
-
-// ---------------- 原生任务栏风格替换 ----------------
-//
-// 只有一个开关：效果与其他所有小组件完全一致（亚克力材质 + 主题背景色 +
-// 面板透明度），参数随外观菜单的全局设置一起调节，没有独立配置项。
-
-export const getTaskbarEffect = (): Promise<boolean> =>
-  invoke<boolean>("get_native_bar");
-
-export const setTaskbarEffect = (enabled: boolean): Promise<void> =>
-  invoke("set_native_bar", { enabled });

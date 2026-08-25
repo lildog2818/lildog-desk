@@ -13,7 +13,6 @@ import "./widgets/opencode-quota";
 import "./widgets/deepseek-balance";
 import "./widgets/memo";
 import "./widgets/clipboard";
-import "./widgets/taskbar";
 
 installGlobalDismiss();
 initAppearance();
