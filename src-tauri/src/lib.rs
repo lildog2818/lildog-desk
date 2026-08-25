@@ -2383,8 +2383,9 @@ pub fn run() {
                             hide_preview_if_idle(app);
                         }
                     }
-                    // 底部停靠模式：拖动结束/过程中保持贴在工作区底边
-                    if *app.state::<AppState>().dock_bottom.lock().unwrap()
+                    // 底部停靠模式：拖动结束/过程中保持贴在工作区底边（仅小组件窗口）
+                    if label.starts_with("w-")
+                        && *app.state::<AppState>().dock_bottom.lock().unwrap()
                         && !pinned
                         && !resizing_active
                         && !programmatic
@@ -2423,9 +2424,8 @@ pub fn run() {
                         .insert(label.clone(), (lw, lh));
 
                     let state = app.state::<AppState>();
-                    // 程序化改尺寸（折叠/展开）不参与阶梯吸附，只记录尺寸；
-                    // 尺寸阶梯吸附仅对小组件窗口生效（主窗口不参与网格吸附）
-                    if !is_programmatic_resize(&state, &label) && label.starts_with("w-") {
+                    // 程序化改尺寸（折叠/展开）不参与阶梯吸附，只记录尺寸
+                    if !is_programmatic_resize(&state, &label) {
                     // 预览式尺寸阶梯：拖动过程零干预，实时显示量化目标预览框，
                     // 松开鼠标左键后由监听线程一次性落位
                     let step = *state.size_step.lock().unwrap();
