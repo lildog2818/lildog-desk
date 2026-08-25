@@ -91,8 +91,8 @@ struct AppState {
     shot_target: Mutex<u8>,
     /// 已注册的全局热键：shortcut -> 用途（1/2/3）
     hotkey_map: Mutex<Vec<(tauri_plugin_global_shortcut::Shortcut, u8)>>,
-    /// 原生任务栏替换：当前配置缓存（None=未配置，用默认参数）
-    native_bar: Mutex<Option<storage::NativeBarCfg>>,
+    /// 原生任务栏替换开关（效果参数随全局外观，无独立配置）
+    native_bar_on: Mutex<bool>,
     /// 已应用策略的任务栏句柄 -> 策略签名（去重与退出还原依据）
     native_painted: Mutex<HashMap<isize, u32>>,
 }
@@ -312,6 +312,8 @@ fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     s.bg_opacity = Some(v);
     storage::save_settings(&dir, &s);
     let _ = app.emit("bg-opacity", v);
+    // 原生任务栏替换开启时，面板透明度变化立即重涂（与其他小组件一起调节）
+    nativebar::sync(&app);
     Ok(())
 }
 
@@ -412,10 +414,6 @@ fn ensure_widget_window(
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.show();
         let _ = existing.set_focus();
-        if label == "w-taskbar" {
-            // 打开「任务栏」开关卡 = 开启原生风格替换
-            nativebar::sync(app);
-        }
         return Ok(());
     }
 
@@ -497,10 +495,6 @@ fn ensure_widget_window(
 
     let _ = win.show();
     let _ = win.set_focus();
-    if label == "w-taskbar" {
-        // 新建「任务栏」开关卡并显示 = 开启原生风格替换
-        nativebar::sync(app);
-    }
     Ok(())
 }
 
@@ -527,10 +521,6 @@ async fn toggle_widget_window(
     if let Some(existing) = app.get_webview_window(&label) {
         if existing.is_visible().unwrap_or(false) {
             let _ = existing.hide();
-            if widget_id == "taskbar" {
-                // 关闭「任务栏」开关卡 = 还原系统默认任务栏外观
-                nativebar::sync(&app);
-            }
             return Ok(());
         }
     }
@@ -543,9 +533,6 @@ async fn close_widget_window(app: AppHandle, widget_id: String) -> Result<(), St
     let label = format!("w-{widget_id}");
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.hide();
-        if widget_id == "taskbar" {
-            nativebar::sync(&app);
-        }
     }
     Ok(())
 }
@@ -1779,9 +1766,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）
+    // 恢复上次退出时仍打开的小组件（位置与尺寸由 windows 记忆提供）。
+    // 「任务栏」不再是悬浮窗：旧快照里的 w-taskbar 直接跳过。
     for ow in settings.open_windows.clone() {
-        if !valid_widget_id(&ow.id) {
+        if !valid_widget_id(&ow.id) || ow.id == "taskbar" {
             continue;
         }
         let _ = ensure_widget_window(app.handle(), &ow.id, &ow.title, 300.0, 320.0);
@@ -1804,10 +1792,6 @@ fn toggle_widget_window_cmd(
     if let Some(existing) = app.get_webview_window(&label) {
         if existing.is_visible().unwrap_or(false) {
             let _ = existing.hide();
-            if widget_id == "taskbar" {
-                // 托盘路径关闭「任务栏」开关卡同样还原原生外观
-                nativebar::sync(app);
-            }
             return Ok(());
         }
     }

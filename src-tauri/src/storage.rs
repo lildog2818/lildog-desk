@@ -65,43 +65,6 @@ pub struct OpenWindow {
     pub title: String,
 }
 
-/// 原生任务栏风格替换配置（nativebar 模块消费；缺省字段按 Default 兜底）
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase", default)]
-pub struct NativeBarCfg {
-    /// clear | blur | acrylic | solid
-    #[serde(default = "default_nb_mode")]
-    pub mode: String,
-    /// 自定义色调 #rrggbb（None = 跟随主题或默认底色 #282837）
-    #[serde(default)]
-    pub tint: Option<String>,
-    /// 0..1
-    #[serde(default = "default_nb_opacity")]
-    pub opacity: f64,
-    /// 色调跟随应用主题背景色
-    #[serde(default)]
-    pub follow_theme: bool,
-}
-
-fn default_nb_mode() -> String {
-    "acrylic".to_string()
-}
-
-fn default_nb_opacity() -> f64 {
-    0.75
-}
-
-impl Default for NativeBarCfg {
-    fn default() -> Self {
-        Self {
-            mode: default_nb_mode(),
-            tint: None,
-            opacity: default_nb_opacity(),
-            follow_theme: false,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -140,9 +103,10 @@ pub struct AppSettings {
     /// 剪贴板图片保存目录（None = 默认 app_data/clipboard_images）
     #[serde(default)]
     pub clip_dir: Option<String>,
-    /// 原生任务栏风格替换（None = 未配置，用默认参数）
+    /// 原生任务栏风格替换开关（效果与其他小组件一致：亚克力材质 +
+    /// 主题背景色 + 面板透明度，参数随全局外观一起调节，无独立配置）
     #[serde(default)]
-    pub native_bar: Option<NativeBarCfg>,
+    pub native_bar_on: Option<bool>,
     #[serde(default)]
     pub windows: HashMap<String, WinState>,
 }
@@ -168,6 +132,11 @@ impl AppSettings {
 
     pub fn global_glass(&self) -> f64 {
         self.glass.unwrap_or_else(default_glass)
+    }
+
+    /// 原生任务栏替换是否处于应用位（None = 旧配置未记录，默认关）
+    pub fn native_bar_on(&self) -> bool {
+        self.native_bar_on.unwrap_or(false)
     }
 
     pub fn size_step(&self) -> u32 {
@@ -303,10 +272,12 @@ const LEGACY_KEYS: [&str; 8] = [
 /// 旧版本升级迁移：
 /// 1. settings.json 扁平字段 → windows["w-launcher"] / windows["main"]
 /// 2. 根目录 data.json → widgets/launcher/data.json
+/// 3. nativeBar 参数对象 → nativeBarOn 布尔开关（效果参数改随全局外观）
 /// 全部幂等：已迁移过则跳过。
 pub fn migrate(dir: &Path) {
     migrate_settings(dir);
     migrate_store(dir);
+    migrate_native_bar(dir);
 }
 
 fn migrate_settings(dir: &Path) {
@@ -353,4 +324,36 @@ fn migrate_store(dir: &Path) {
             let _ = fs::remove_file(&old);
         }
     }
+}
+
+/// nativeBar（旧参数对象）→ nativeBarOn（布尔开关）：
+/// 旧版本的效果开 = 退出时「任务栏」开关卡窗口仍打开，即 open_windows
+/// 里记录了 w-taskbar。迁移后移除旧键，避免残留歧义。
+fn migrate_native_bar(dir: &Path) {
+    let sp = settings_path(dir);
+    let Ok(text) = fs::read_to_string(&sp) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
+    if !obj.contains_key("nativeBar") {
+        return;
+    }
+    if !obj.contains_key("nativeBarOn") {
+        let was_on = obj
+            .get("openWindows")
+            .and_then(|w| w.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .any(|w| w.get("id").and_then(|i| i.as_str()) == Some("taskbar"))
+            })
+            .unwrap_or(false);
+        obj.insert("nativeBarOn".into(), Value::Bool(was_on));
+    }
+    obj.remove("nativeBar");
+    let _ = write_json(&sp, &v);
 }

@@ -2,17 +2,14 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { applyPanelAlpha, applyTheme, toast } from "./shell";
 import {
   getAutostart,
-  getNativeBar,
   getWindowState,
   setAutostart,
   setBgOpacity,
   setFontSizes,
-  setNativeBar,
   setTextEffect,
   setTheme,
   setSizeStep,
   type FontSizes,
-  type NativeBarCfg,
   type ThemeCfg,
   type TextEffectLevel,
 } from "./winstate";
@@ -251,132 +248,11 @@ function buildThemeRows(initial: Required<ThemeCfg>): HTMLDivElement {
   return box;
 }
 
-/** 原生任务栏风格替换分组：材质四档 + 24 色板 + 不透明度 + 跟随主题。
- *  效果在「任务栏」小组件卡片开启期间生效，这里只调参数。 */
-async function nativeBarSection(): Promise<HTMLDivElement> {
-  const cfg: NativeBarCfg = await getNativeBar();
+/** 原生任务栏替换没有独立调节框：效果与所有小组件一致，
+ *  上方的「面板透明度」滑条和「背景颜色」色板调节时即同步生效。 */
 
-  const box = document.createElement("div");
-  box.className = "theme-box";
-
-  const head = document.createElement("div");
-  head.className = "opacity-head";
-  head.appendChild(Object.assign(document.createElement("span"), { textContent: "原生任务栏" }));
-  box.appendChild(head);
-
-  const caption = document.createElement("div");
-  caption.textContent = "在「任务栏」小组件开启期间生效";
-  caption.style.cssText = "font-size:calc(var(--fs-small) - .5px);color:var(--text-dim);margin:-4px 0 8px;";
-  box.appendChild(caption);
-
-  let saveTimer = 0;
-  const persist = (): void => {
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => {
-      void setNativeBar(cfg).catch((e) => toast(String(e)));
-    }, 250);
-  };
-
-  // ---- 材质四档 ----
-  const modeHead = document.createElement("div");
-  modeHead.className = "opacity-head";
-  modeHead.appendChild(Object.assign(document.createElement("span"), { textContent: "材质" }));
-  box.append(modeHead);
-  const modeRow = document.createElement("div");
-  modeRow.className = "ladder-row";
-  const paintModes = (): void => {
-    modeRow.querySelectorAll(".ladder-btn").forEach((el) =>
-      el.classList.toggle("on", (el as HTMLElement).dataset.m === cfg.mode),
-    );
-  };
-  for (const [m, label] of [
-    ["clear", "透明"],
-    ["blur", "模糊"],
-    ["acrylic", "亚克力"],
-    ["solid", "纯色"],
-  ] as const) {
-    const b = document.createElement("button");
-    b.className = "ladder-btn";
-    b.dataset.m = m;
-    b.textContent = label;
-    b.onclick = () => {
-      cfg.mode = m;
-      paintModes();
-      persist();
-    };
-    modeRow.appendChild(b);
-  }
-  paintModes();
-  box.appendChild(modeRow);
-
-  // ---- 色板（含「跟随背景色」开关行）----
-  const colorHead = document.createElement("div");
-  colorHead.className = "opacity-head";
-  colorHead.appendChild(Object.assign(document.createElement("span"), { textContent: "色调" }));
-  box.append(colorHead);
-  const followLabel = document.createElement("span");
-  followLabel.textContent = "跟随应用背景色";
-  followLabel.style.cssText = "font-size:var(--fs-small);color:var(--text-dim);flex:1;";
-  const followBtn = document.createElement("button");
-  followBtn.className = "auto-toggle";
-  const paintFollow = (): void => {
-    followBtn.classList.toggle("on", cfg.followTheme);
-    followBtn.setAttribute("aria-pressed", String(cfg.followTheme));
-  };
-  followBtn.onclick = () => {
-    cfg.followTheme = !cfg.followTheme;
-    paintFollow();
-    persist();
-  };
-  const followRow = document.createElement("div");
-  followRow.className = "auto-row";
-  followRow.style.marginTop = "0";
-  followRow.append(followLabel, followBtn);
-  paintFollow();
-  box.appendChild(followRow);
-
-  const grid = document.createElement("div");
-  grid.className = "swatch-grid";
-  const paintSwatches = (): void => {
-    grid.querySelectorAll<HTMLButtonElement>(".swatch").forEach((el) =>
-      el.classList.toggle("on", el.dataset.c === cfg.tint),
-    );
-  };
-  for (const c of PALETTE_24) {
-    const s = document.createElement("button");
-    s.className = "swatch";
-    s.style.background = c;
-    s.dataset.c = c;
-    s.title = c;
-    s.onclick = () => {
-      cfg.tint = c;
-      paintSwatches();
-      persist();
-    };
-    grid.appendChild(s);
-  }
-  paintSwatches();
-  box.appendChild(grid);
-
-  // ---- 不透明度滑条 ----
-  box.appendChild(
-    sliderRow({
-      label: "不透明度",
-      initial: clamp01(cfg.opacity),
-      min: 0,
-      max: 1,
-      stepSize: 0.01,
-      onCommit: (v) => {
-        cfg.opacity = v;
-        return setNativeBar(cfg);
-      },
-    }),
-  );
-
-  return box;
-}
-
-export function autostartRow(): HTMLDivElement {  const autoRow = document.createElement("div");
+export function autostartRow(): HTMLDivElement {
+  const autoRow = document.createElement("div");
   autoRow.className = "auto-row";
   const autoLabel = document.createElement("span");
   autoLabel.textContent = "开机自启";
@@ -525,12 +401,7 @@ export async function buildAppearancePop(
     // 可读性增强：三档描边+阴影
     pop.appendChild(sectionLabel("文字效果"));
     pop.appendChild(readabilityRow(st.textEffect ?? "std"));
-    // 原生任务栏风格替换：材质 / 色调 / 不透明度 / 跟随主题
-    try {
-      pop.appendChild(await nativeBarSection());
-    } catch {
-      /* 后端不可用时跳过该分组 */
-    }
+    // 原生任务栏替换无独立调节框：开启后跟随上面的面板透明度与背景颜色
     if (withAutostart) pop.appendChild(autostartRow());
   } catch {
     /* window state unavailable */

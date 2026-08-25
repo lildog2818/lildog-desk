@@ -109,20 +109,12 @@ export const updateTrayWidgets = (items: TrayItem[]): Promise<void> =>
   invoke("update_tray_widgets", { items });
 
 // ---------------- 原生任务栏风格替换 ----------------
+//
+// 只有一个开关：效果与其他所有小组件完全一致（亚克力材质 + 主题背景色 +
+// 面板透明度），参数随外观菜单的全局设置一起调节，没有独立配置项。
 
-export interface NativeBarCfg {
-  /** clear=透明 blur=模糊 acrylic=亚克力 solid=纯色 */
-  mode: "clear" | "blur" | "acrylic" | "solid";
-  /** 自定义色调 #rrggbb；null = 跟随主题或默认底色 */
-  tint?: string | null;
-  /** 0..1 */
-  opacity: number;
-  /** 色调跟随应用主题背景色 */
-  followTheme: boolean;
-}
+export const getTaskbarEffect = (): Promise<boolean> =>
+  invoke<boolean>("get_native_bar");
 
-export const getNativeBar = (): Promise<NativeBarCfg> =>
-  invoke<NativeBarCfg>("get_native_bar");
-
-export const setNativeBar = (cfg: NativeBarCfg): Promise<void> =>
-  invoke("set_native_bar", { cfg });
+export const setTaskbarEffect = (enabled: boolean): Promise<void> =>
+  invoke("set_native_bar", { enabled });
