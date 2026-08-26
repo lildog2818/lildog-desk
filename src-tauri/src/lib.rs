@@ -2053,6 +2053,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     *app.state::<AppState>().size_step.lock().unwrap() = settings.size_step();
     *app.state::<AppState>().dock_bottom.lock().unwrap() = settings.global_dock_bottom();
 
+    // 控制台与小组件一致：全程沉在 Z 序最底层，不悬浮覆盖其他应用
+    #[cfg(target_os = "windows")]
+    if let Ok(raw) = win.hwnd() {
+        bottom_guard::register(raw.0 as isize);
+    }
+    sink_to_bottom(&win);
+
     if let Ok(sz) = win.inner_size() {
         let scale = win.scale_factor().unwrap_or(1.0);
         app.state::<AppState>().latest_size.lock().unwrap().insert(
@@ -2216,6 +2223,8 @@ fn toggle_main_visible(app: &AppHandle) {
                     let _ = win.set_size(LogicalSize::new(w, h));
                 }
             }
+            // 与小组件一致：显示后沉回最底层
+            sink_to_bottom(&win);
         }
     }
 }
@@ -2503,9 +2512,9 @@ pub fn run() {
                 let label = window.label();
                 #[cfg(target_os = "windows")]
                 reapply_glass_async(app, label);
-                // 未固定的组件窗口：点击/激活会被系统抬升，短暂延迟后沉回最底层
+                // 未固定的组件窗口与控制台：点击/激活会被系统抬升，短暂延迟后沉回最底层
                 if *focused
-                    && label.starts_with("w-")
+                    && (label.starts_with("w-") || label == "main")
                     && !app
                         .state::<AppState>()
                         .pinned_set
