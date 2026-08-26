@@ -50,7 +50,7 @@ let data: ClipData = { items: [] };
 let lastSeq = 0;
 let saveTimer = 0;
 let pollTimer = 0;
-let tab: Tab = null;
+let tab: Tab = "text"; // 默认停留在文字页签，图片/文件按需切换
 let query = "";
 /** 键盘导航高亮的行 id */
 let selectedId: string | null = null;
