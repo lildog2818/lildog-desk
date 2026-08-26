@@ -1,6 +1,7 @@
 mod clipboard;
 mod icons;
 mod links;
+mod startup;
 mod storage;
 
 use std::collections::{HashMap, HashSet};
@@ -2320,7 +2321,10 @@ pub fn run() {
             cancel_shot,
             paste_to_last_target,
             get_autostart,
-            set_autostart
+            set_autostart,
+            startup::startup_list,
+            startup::startup_add,
+            startup::startup_remove
         ])
         .setup(setup)
         .on_window_event(|window, event| match event {
