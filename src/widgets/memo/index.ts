@@ -70,7 +70,12 @@ function mountMemo(root: HTMLElement): () => void {
 
   function render(): void {
     list.innerHTML = "";
-    for (const item of data.items) {
+    // 未完成的排在上面，已完成的沉到列表底部（存储顺序保持不变）
+    const ordered = [
+      ...data.items.filter((i) => !i.done),
+      ...data.items.filter((i) => i.done),
+    ];
+    for (const item of ordered) {
       const row = document.createElement("div");
       row.className = "memo-item" + (item.done ? " done" : "");
 
