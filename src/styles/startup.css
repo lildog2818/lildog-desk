@@ -71,7 +71,7 @@
   padding: 2px 10px 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .su-list::-webkit-scrollbar {
@@ -83,24 +83,37 @@
   border-radius: 3px;
 }
 
+/* 常态：只显示图标与名称 */
 .su-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 7px 9px;
   border-radius: 9px;
-  border: 1px solid transparent;
+  cursor: default;
 }
 
 .su-item:hover {
   background: var(--hover);
-  border-color: var(--stroke);
 }
 
 .su-icon {
   flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--fs-title);
   line-height: 1;
+  overflow: hidden;
+}
+
+.su-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .su-main {
@@ -111,40 +124,24 @@
 .su-name {
   font-size: var(--fs-ui);
   line-height: 1.35;
-  word-break: break-all;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.su-cmd {
-  font-size: var(--fs-small);
+/* 已停用的行：置灰显示，底部保留恢复入口 */
+.su-item.su-disabled {
+  opacity: 0.55;
+}
+
+.su-badge {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: calc(var(--fs-small) - 1.5px);
   color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.su-del {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-small);
-  cursor: pointer;
-  visibility: hidden;
-}
-
-.su-item:hover .su-del {
-  visibility: visible;
-}
-
-.su-del:hover {
-  background: rgba(255, 82, 82, 0.16);
-  color: #ff8a8a;
+  border: 1px solid var(--stroke);
+  vertical-align: 1px;
 }
 
 .su-empty {

@@ -595,6 +595,15 @@ body.drag-active * {
   color: #ff8a8a;
 }
 
+.ctx-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ctx-item.disabled:hover {
+  background: transparent;
+}
+
 .ctx-sub {
   position: absolute;
   left: calc(100% + 4px);

@@ -2375,7 +2375,11 @@ pub fn run() {
             set_autostart,
             startup::startup_list,
             startup::startup_add,
-            startup::startup_remove
+            startup::startup_remove,
+            startup::startup_edit,
+            startup::startup_restore,
+            startup::startup_target_path,
+            startup::startup_lnk_command
         ])
         .setup(setup)
         .on_window_event(|window, event| match event {

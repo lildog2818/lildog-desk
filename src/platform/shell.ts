@@ -79,6 +79,7 @@ export function closeOverlays(): void {
 export interface MenuEntry {
   label?: string;
   danger?: boolean;
+  disabled?: boolean;
   action?: () => void;
   sub?: Array<{ label: string; action: () => void }>;
 }
@@ -120,8 +121,10 @@ export function buildMenu(x: number, y: number, entries: MenuEntry[]): void {
     }
     const row = document.createElement("div");
     row.className = e.danger ? "ctx-item danger" : "ctx-item";
+    if (e.disabled) row.classList.add("disabled");
     row.textContent = e.label ?? "";
     row.onclick = () => {
+      if (e.disabled) return;
       closeMenus();
       e.action?.();
     };

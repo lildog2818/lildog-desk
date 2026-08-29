@@ -47,6 +47,51 @@ pub async fn startup_remove(location: String, key: String) -> Result<(), String>
         .map_err(|e| format!("任务执行失败：{e}"))?
 }
 
+#[tauri::command]
+pub async fn startup_edit(
+    location: String,
+    key: String,
+    command: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || edit_impl(&location, &key, &command))
+        .await
+        .map_err(|e| format!("任务执行失败：{e}"))?
+}
+
+#[tauri::command]
+pub async fn startup_restore(
+    location: String,
+    key: String,
+    name: String,
+    command: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || restore_impl(&location, &key, &name, &command))
+        .await
+        .map_err(|e| format!("任务执行失败：{e}"))?
+}
+
+/// 从命令行解析出可执行文件路径（引号路径 + %VAR% 展开），供前端取图标/定位
+#[tauri::command]
+pub async fn startup_target_path(command: String) -> Result<String, String> {
+    Ok(split_command(&command)
+        .map(|(p, _)| p)
+        .unwrap_or_default())
+}
+
+/// 解析启动文件夹内 .lnk 的「有效目标命令」（exe 路径含引号 + 参数）。
+/// 前端在关闭自启前调用，把真实指向记录下来以便日后恢复；非 .lnk 或解析失败返回原路径。
+#[tauri::command]
+pub async fn startup_lnk_command(path: String) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(imp::lnk_effective_command(&path).unwrap_or(path))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(path)
+    }
+}
+
 fn list_impl() -> Result<Vec<StartupItem>, String> {
     #[cfg(target_os = "windows")]
     return imp::list_all();
@@ -72,6 +117,81 @@ fn remove_impl(location: &str, key: &str) -> Result<(), String> {
         let _ = (location, key);
         Err("开机启动项仅支持 Windows".into())
     }
+}
+
+fn edit_impl(location: &str, key: &str, command: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return imp::edit(location, key, command);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (location, key, command);
+        Err("开机启动项仅支持 Windows".into())
+    }
+}
+
+fn restore_impl(location: &str, key: &str, name: &str, command: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return imp::restore(location, key, name, command);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (location, key, name, command);
+        Err("开机启动项仅支持 Windows".into())
+    }
+}
+
+/// 从命令行解析出「可执行文件路径 + 参数」。
+/// 支持成对引号内的路径（含空格）与 %VAR% 环境变量展开；解析失败返回 None。
+pub(crate) fn split_command(cmd: &str) -> Option<(String, Option<String>)> {
+    let cmd = cmd.trim();
+    if cmd.is_empty() {
+        return None;
+    }
+    let (path, args) = if let Some(rest) = cmd.strip_prefix('"') {
+        let end = rest.find('"').map(|i| i + 1).unwrap_or(rest.len());
+        let quoted = &rest[..end];
+        let tail = rest[end..].trim();
+        (quoted, tail)
+    } else {
+        match cmd.find(char::is_whitespace) {
+            Some(i) => (&cmd[..i], cmd[i..].trim()),
+            None => (cmd, ""),
+        }
+    };
+    if path.is_empty() {
+        return None;
+    }
+    Some((expand_env(path), (!args.is_empty()).then(|| args.to_string())))
+}
+
+/// 展开命令行里的 %VAR% 环境变量（大小写不敏感）
+fn expand_env(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s.to_string();
+    while let Some(start) = rest.find('%') {
+        let rest_after = &rest[start + 1..];
+        let Some(end) = rest_after.find('%') else {
+            out.push_str(&rest);
+            return out;
+        };
+        let name = &rest_after[..end];
+        // Windows 环境变量名大小写不敏感
+        let var = std::env::var(name)
+            .or_else(|_| std::env::var(name.to_lowercase()))
+            .or_else(|_| std::env::var(name.to_uppercase()));
+        match var {
+            Ok(v) => {
+                out.push_str(&rest[..start]);
+                out.push_str(&v);
+                rest = rest_after[end + 1..].to_string();
+            }
+            Err(_) => {
+                out.push_str(&rest[..start + 1]);
+                rest = rest_after.to_string();
+            }
+        }
+    }
+    out.push_str(&rest);
+    out
 }
 
 // ---------------- 校验（平台无关） ----------------
@@ -373,6 +493,201 @@ mod imp {
             LOC_COMMON_STARTUP => delete_startup_file(common_startup_dir(), key),
             _ => Err("未知的启动项来源".into()),
         }
+    }
+
+    /// 覆盖写入注册表 Run 值（新值不存在时会创建）
+    fn set_run_value(root: HKEY, key: &str, command: &str) -> Result<(), String> {
+        let key = key.trim();
+        if key.is_empty()
+            || key.len() > 120
+            || key.contains("..")
+            || key.contains('\\')
+            || key.contains('/')
+            || key.chars().any(|c| c.is_control())
+        {
+            return Err("非法的启动项标识".into());
+        }
+        let validate = validate_command(command)?;
+        let hk = open_run_key(root, true)?;
+        let value_name = wide(&key);
+        let data = utf16_le_bytes(&validate);
+        let result = unsafe {
+            RegSetValueExW(
+                hk,
+                PCWSTR(value_name.as_ptr()),
+                Some(0),
+                REG_SZ,
+                Some(data.as_slice()),
+            )
+        };
+        unsafe {
+            let _ = RegCloseKey(hk);
+        }
+        check(result, "写入注册表")
+    }
+
+    /// 修改启动项指向：
+    /// - 注册表 Run 值：同名值覆盖为新命令
+    /// - 启动文件夹 .lnk：重写链接目标
+    /// - 启动文件夹其它文件：不可修改（返回错误）
+    pub fn edit(location: &str, key: &str, command: &str) -> Result<(), String> {
+        let key = key.trim();
+        if key.is_empty()
+            || key.len() > 255
+            || key.contains('\\')
+            || key.contains('/')
+            || key.contains("..")
+            || key.chars().any(|c| c.is_control())
+        {
+            return Err("非法的启动项标识".into());
+        }
+        match location {
+            LOC_HKCU_RUN => set_run_value(HKEY_CURRENT_USER, key, command),
+            LOC_HKLM_RUN => set_run_value(HKEY_LOCAL_MACHINE, key, command),
+            LOC_USER_STARTUP | LOC_COMMON_STARTUP => {
+                let dir = if location == LOC_USER_STARTUP {
+                    user_startup_dir()
+                } else {
+                    common_startup_dir()
+                };
+                let Some(dir) = dir else {
+                    return Err("无法定位启动文件夹".into());
+                };
+                let target = dir.join(key);
+                if target.parent() != Some(dir.as_path()) {
+                    return Err("非法的文件名".into());
+                }
+                if !target.is_file() {
+                    return Err("启动项文件不存在或已被移除".into());
+                }
+                let ext = target
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if ext != "lnk" {
+                    return Err(
+                        "该启动项本身是可执行文件，无法修改指向；请删除后重新添加".into(),
+                    );
+                }
+                let cmd = validate_command(command)?;
+                let (exe, args) = super::split_command(&cmd)
+                    .ok_or_else(|| "无法解析命令中的程序路径".to_string())?;
+                if !std::path::Path::new(&exe).is_file() {
+                    return Err(format!("目标程序不存在：{exe}"));
+                }
+                write_lnk(&target, &exe, args.as_deref().unwrap_or(""))
+            }
+            _ => Err("未知的启动项来源".into()),
+        }
+    }
+
+    /// 恢复一个被关闭的启动项：
+    /// - 注册表项：原位置写回命令
+    /// - 启动文件夹项：按原文件名在该目录重建 .lnk 指向记录的路径
+    pub fn restore(
+        location: &str,
+        key: &str,
+        name: &str,
+        command: &str,
+    ) -> Result<(), String> {
+        let cmd = validate_command(command)?;
+        match location {
+            LOC_HKCU_RUN => set_run_value(HKEY_CURRENT_USER, key, &cmd),
+            LOC_HKLM_RUN => set_run_value(HKEY_LOCAL_MACHINE, key, &cmd),
+            LOC_USER_STARTUP | LOC_COMMON_STARTUP => {
+                let dir = if location == LOC_USER_STARTUP {
+                    user_startup_dir()
+                } else {
+                    common_startup_dir()
+                };
+                let Some(dir) = dir else {
+                    return Err("无法定位启动文件夹".into());
+                };
+                // 恢复时统一重建为 <名称>.lnk
+                let stem = name.trim().replace(['\\', '/', ':'], "_");
+                if stem.is_empty() || stem.len() > 120 {
+                    return Err("非法的启动项名称".into());
+                }
+                let file = dir.join(format!("{stem}.lnk"));
+                let (exe, args) = super::split_command(&cmd)
+                    .ok_or_else(|| "无法解析命令中的程序路径".to_string())?;
+                if !std::path::Path::new(&exe).is_file() {
+                    return Err("原程序已不存在，无法恢复，请重新添加".into());
+                }
+                write_lnk(&file, &exe, args.as_deref().unwrap_or(""))
+            }
+            _ => Err("未知的启动项来源".into()),
+        }
+    }
+
+    /// 还原 .lnk 的「有效目标命令」：解析出的 exe 路径 + 原始参数。
+    /// 仅对启动文件夹内存在的 .lnk 生效；其余返回 None。
+    pub fn lnk_effective_command(path: &str) -> Option<String> {
+        let p = Path::new(path);
+        let is_lnk = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase() == "lnk")
+            .unwrap_or(false);
+        if !p.is_file() || !is_lnk {
+            return None;
+        }
+        let lnk = parselnk::Lnk::try_from(p).ok()?;
+        let exe = crate::links::inner_target(
+            lnk.link_info.local_base_path.clone().filter(|s| !s.is_empty()),
+            lnk.link_info.common_path_suffix.clone(),
+            lnk.string_data.relative_path.clone(),
+            p,
+        )?;
+        let mut cmd = if exe.contains(' ') && !exe.starts_with('"') {
+            format!("\"{exe}\"")
+        } else {
+            exe
+        };
+        if let Some(args) = lnk
+            .string_data
+            .command_line_arguments
+            .filter(|s| !s.trim().is_empty())
+        {
+            cmd.push(' ');
+            cmd.push_str(&args);
+        }
+        Some(cmd)
+    }
+
+    /// 用 IShellLinkW 创建 / 重写 .lnk（目标路径 + 参数）
+    fn write_lnk(path: &Path, exe: &str, args: &str) -> Result<(), String> {
+        use windows::core::{Interface, PCWSTR};
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+            COINIT_APARTMENTTHREADED, IPersistFile,
+        };
+        use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| format!("创建快捷方式对象失败：{e}"))?;
+            let wexe: Vec<u16> = exe.encode_utf16().chain(std::iter::once(0)).collect();
+            link.SetPath(PCWSTR(wexe.as_ptr()))
+                .map_err(|e| format!("设置快捷方式目标失败：{e}"))?;
+            if !args.is_empty() {
+                let wargs: Vec<u16> = args.encode_utf16().chain(std::iter::once(0)).collect();
+                link.SetArguments(PCWSTR(wargs.as_ptr()))
+                    .map_err(|e| format!("设置快捷方式参数失败：{e}"))?;
+            }
+            let pf: IPersistFile = link
+                .cast()
+                .map_err(|e| format!("快捷方式接口转换失败：{e}"))?;
+            let wpath: Vec<u16> = path
+                .to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            pf.Save(PCWSTR(wpath.as_ptr()), true)
+                .map_err(|e| format!("保存快捷方式失败：{e}"))?;
+            CoUninitialize();
+        }
+        Ok(())
     }
 }
 
