@@ -85,8 +85,10 @@ struct AppState {
     /// 贴图窗待取载荷：label -> (path, w, h)。前端就绪后主动拉取，
     /// 避免"先 emit 后监听"的竞态导致窗口永远空白。
     pending_pins: Mutex<HashMap<String, (String, i32, i32)>>,
-    /// 热键呼出面板时记录的前台窗口，粘贴时还原焦点
+    /// 最近一次的外部前台窗口（非本应用窗口），双击粘贴时还原焦点
     last_foreground: Mutex<isize>,
+    /// 常驻轮询「最近的外部前台窗口」的线程是否已启动
+    fg_watcher_started: AtomicBool,
     /// 进行中的截图用途：0=无 1=复制到剪贴板 2=自动贴图
     shot_target: Mutex<u8>,
     /// 已注册的全局热键：shortcut -> 用途（1/2/3）
@@ -861,12 +863,14 @@ async fn cancel_shot(app: AppHandle) -> Result<(), String> {
 
 // ---------------- 粘贴回填 ----------------
 
-/// 把内容粘贴回热键呼出面板之前的前台窗口（还原焦点 + 模拟 Ctrl+V）
+/// 把内容粘贴回最近的外部前台窗口（还原焦点 + 模拟 Ctrl+V）
 #[tauri::command]
 async fn paste_to_last_target(app: AppHandle) -> Result<(), String> {
     let h = *app.state::<AppState>().last_foreground.lock().unwrap();
     if h == 0 {
-        return Err("没有可粘贴的目标窗口".into());
+        return Err(
+            "未记录粘贴目标：请先用 Ctrl+` 呼出剪贴板，或复制后直接手动粘贴".into(),
+        );
     }
     #[cfg(target_os = "windows")]
     unsafe {
@@ -883,6 +887,8 @@ async fn paste_to_last_target(app: AppHandle) -> Result<(), String> {
         let _ = ShowWindowAsync(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
         std::thread::sleep(Duration::from_millis(90));
+        // 前台激活受限时补一次重试，确保按键落在目标窗口
+        let _ = SetForegroundWindow(hwnd);
 
         let key = |vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
                    up: bool| INPUT {
@@ -932,6 +938,48 @@ fn summon_clipboard_panel(app: &AppHandle) {
         let _ = toggle_widget_window_cmd(app, "clipboard", "lildog · 剪贴板", 320.0, 480.0);
     }
 }
+
+/// 记录当前的外部前台窗口（非本应用窗口）为粘贴目标
+fn record_last_foreground(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return;
+        }
+        let mut pid = 0u32;
+        let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
+        // 自己的窗口（控制台 / 悬浮窗 / 贴图 / 截图层）不算外部目标
+        if pid == std::process::id() {
+            return;
+        }
+        *app.state::<AppState>().last_foreground.lock().unwrap() = fg.0 as isize;
+    }
+}
+
+/// 常驻轮询「最近的外部前台窗口」：面板无论从热键、控制台还是托盘打开，
+/// 双击粘贴都能还原到用户最后停留的外部应用（懒启动、开销可忽略）
+#[cfg(target_os = "windows")]
+fn start_foreground_watcher(app: &AppHandle) {
+    if app
+        .state::<AppState>()
+        .fg_watcher_started
+        .swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(300));
+        record_last_foreground(&app);
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_foreground_watcher(_app: &AppHandle) {}
 
 // ---------------- 托盘 ----------------
 
@@ -2183,6 +2231,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
         let _ = ensure_widget_window(app.handle(), &ow.id, &ow.title, 300.0, 320.0);
     }
+
+    // 常驻记录最近的外部前台窗口，支撑剪贴板双击粘贴还原目标
+    start_foreground_watcher(app.handle());
 
     Ok(())
 }
