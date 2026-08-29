@@ -74,25 +74,15 @@ function sameList(a?: string[], b?: string[]): boolean {
   return a.every((v, i) => v === b[i]);
 }
 
-function firstLine(text: string): string {
-  const line =
-    text
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .find((l) => l.length > 0) ?? "";
-  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
-}
-
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes(),
-  ).padStart(2, "0")}`;
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) return hm;
-  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate(),
-  ).padStart(2, "0")} ${hm}`;
+/** 文本两行预览：取前两个非空行，每行截断到 max 字符 */
+function previewLines(text: string, max = 96): [string, string] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const cut = (l: string): string =>
+    l.length > max ? `${l.slice(0, max)}…` : l;
+  return [cut(lines[0] ?? ""), cut(lines[1] ?? "")];
 }
 
 // ---------------- 入库 ----------------
@@ -256,11 +246,10 @@ function rowEl(item: ClipItem): HTMLDivElement {
     "cb-row" + (item.id === selectedId ? " sel" : "");
   row.dataset.id = item.id;
 
-  const icon = document.createElement("div");
-  icon.className = "cb-row-icon";
+  // 仅图片条目保留缩略图（内容），文字/文件不再显示占位图标
   if (item.kind === "image") {
-    // 缩略图：保持原始宽高比，不裁切
-    icon.classList.add("is-img");
+    const icon = document.createElement("div");
+    icon.className = "cb-row-icon is-img";
     if (item.imagePath) {
       const cached = thumbCache.get(`${item.imagePath}@96`);
       if (cached) {
@@ -269,34 +258,42 @@ function rowEl(item: ClipItem): HTMLDivElement {
         loadThumb(item.imagePath, 96, icon);
       }
     }
-  } else {
-    icon.textContent = item.kind === "files" ? "📁" : "📄";
+    row.appendChild(icon);
   }
 
   const main = document.createElement("div");
   main.className = "cb-main";
-  const preview = document.createElement("div");
-  preview.className = "cb-preview";
-  const sub = document.createElement("div");
-  sub.className = "cb-sub";
-  if (item.kind === "text") {
-    preview.textContent = `${item.pinned ? "📌 " : ""}${firstLine(item.text ?? "")}`;
-    sub.textContent = `${(item.text ?? "").length} 字符${item.truncated ? " · 已截断" : ""}`;
-  } else if (item.kind === "image") {
-    preview.textContent = `${item.pinned ? "📌 " : ""}图片 ${item.width ?? "?"}×${item.height ?? "?"}`;
-    sub.textContent = item.imagePath?.split(/[\\/]/).pop() ?? "";
-  } else {
+
+  const [l1, l2] = ((): [string, string] => {
+    if (item.kind === "text") return previewLines(item.text ?? "");
+    if (item.kind === "image") {
+      return [
+        `图片 ${item.width ?? "?"}×${item.height ?? "?"}`,
+        item.imagePath?.split(/[\\/]/).pop() ?? "",
+      ];
+    }
     const names = item.files ?? [];
-    preview.textContent = `${item.pinned ? "📌 " : ""}${names[0] ?? ""}${names.length > 1 ? ` 等 ${names.length} 项` : ""}`;
-    sub.textContent = names.slice(1, 3).join("、");
+    return [
+      `${names[0] ?? ""}${names.length > 1 ? ` 等 ${names.length} 项` : ""}`,
+      names.slice(1, 4).join("、"),
+    ];
+  })();
+
+  const p1 = document.createElement("div");
+  p1.className = "cb-pv cb-pv-1";
+  p1.textContent = `${item.pinned ? "📌 " : ""}${l1}`;
+  main.appendChild(p1);
+
+  if (l2) {
+    const p2 = document.createElement("div");
+    p2.className = "cb-pv cb-pv-2";
+    p2.textContent = l2;
+    main.appendChild(p2);
   }
-  main.append(preview, sub);
 
-  const time = document.createElement("div");
-  time.className = "cb-time";
-  time.textContent = fmtTime(item.ts);
+  if (item.kind === "text") main.title = item.text ?? "";
+  row.append(main);
 
-  row.append(icon, main, time);
   row.onclick = () => copyItem(item);
   row.ondblclick = () => pasteItem(item);
   row.oncontextmenu = (ev) => {
@@ -353,10 +350,10 @@ function cellEl(item: ClipItem): HTMLDivElement {
 
   const cap = document.createElement("div");
   cap.className = "cb-cell-cap";
-  cap.textContent = `${item.width ?? "?"}×${item.height ?? "?"} · ${fmtTime(item.ts)}`;
+  cap.textContent = `${item.width ?? "?"}×${item.height ?? "?"}`;
   cell.appendChild(cap);
 
-  cell.title = `单击复制 · 双击粘贴 · ${fmtTime(item.ts)}`;
+  cell.title = "单击复制 · 双击粘贴";
   cell.onclick = () => copyItem(item);
   cell.ondblclick = () => pasteItem(item);
   cell.oncontextmenu = (ev) => {
