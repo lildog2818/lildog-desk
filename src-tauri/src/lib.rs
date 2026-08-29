@@ -2301,6 +2301,20 @@ fn reapply_glass_async(app: &AppHandle, label: &str) {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        // 单实例：重复启动时仅显示并聚焦已有主窗口，不做双开
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let app = app.clone();
+            // 窗口操作离开回调线程，避免主线程重入造成死锁
+            std::thread::spawn(move || {
+                if let Some(win) = app.get_webview_window("main") {
+                    if !win.is_visible().unwrap_or(false) {
+                        let _ = win.show();
+                    }
+                    let _ = win.set_focus();
+                    sink_to_bottom(&win);
+                }
+            });
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
