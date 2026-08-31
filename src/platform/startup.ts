@@ -46,6 +46,10 @@ export const startupRestore = (
 export const startupTargetPath = (command: string): Promise<string> =>
   invoke<string>("startup_target_path", { command });
 
+/** 解析快捷方式 .lnk 的「有效目标命令」（exe 路径含引号 + 参数）；非 .lnk 返回原路径 */
+export const startupLnkCommand = (path: string): Promise<string> =>
+  invoke<string>("startup_lnk_command", { path });
+
 export const STARTUP_LOCATION_LABEL: Record<string, string> = {
   "hkcu-run": "当前用户 · 注册表",
   "hklm-run": "所有用户 · 注册表",

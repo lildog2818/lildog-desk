@@ -18,6 +18,14 @@ import {
   type Group,
   type Item,
 } from "./store";
+import {
+  addStartupItem,
+  listStartupItems,
+  removeStartupItem,
+  startupLnkCommand,
+  startupTargetPath,
+  type StartupItem,
+} from "../../platform/startup";
 
 export const PALETTE = [
   "#ffb84d",
@@ -448,7 +456,61 @@ function editDialog(item: Item): void {
   ]);
 }
 
-export function itemMenu(ev: MouseEvent, item: Item): void {
+/** 该条目注册为开机自启时应写入注册表 Run 的命令；不可注册（文件夹）返回 null。
+ * 快捷方式直接登记 .lnk 路径（登录时按 ShellExecute 语义启动），
+ * 可执行文件为「程序路径 + 启动参数」。 */
+function startupCommandFor(item: Item): string | null {
+  const t = item.target.trim();
+  if (item.kind === "folder" || !t) return null;
+  if (/\.lnk$/i.test(t)) return t;
+  return item.args ? `${t} ${item.args}` : t;
+}
+
+/** 归一化路径/命令字符串，用于启动项匹配 */
+function normKey(p: string): string {
+  return p
+    .trim()
+    .toLowerCase()
+    .replace(/^"(.*)"$/, "$1")
+    .replace(/[\\/]+$/g, "");
+}
+
+/** 解析命令/快捷方式到「可执行文件路径」的归一化键：
+ * .lnk 先取有效目标再切程序路径；其余直接切出程序路径 */
+async function executableKey(cmdOrPath: string): Promise<string> {
+  let raw = cmdOrPath.trim().replace(/^"(.*)"$/, "$1");
+  if (/\.lnk$/i.test(raw)) {
+    const eff = await startupLnkCommand(raw).catch(() => raw);
+    if (eff && eff !== raw) raw = eff.trim().replace(/^"(.*)"$/, "$1");
+    else return normKey(raw);
+  }
+  const exe = await startupTargetPath(raw).catch(() => "");
+  return normKey(exe || raw);
+}
+
+/** 查询该条目当前是否已在开机自启中，并返回命中的启动项（用于取消） */
+async function startupToggleState(
+  cmd: string,
+): Promise<{ enabled: boolean; match: StartupItem | null }> {
+  try {
+    const items = await listStartupItems();
+    const map = new Map<string, StartupItem>();
+    for (const s of items) {
+      map.set(normKey(s.command), s);
+      map.set(await executableKey(s.command), s);
+    }
+    const raw = normKey(cmd);
+    const exe = await executableKey(cmd);
+    const hit = map.get(raw) ?? map.get(exe) ?? null;
+    return hit
+      ? { enabled: true, match: hit }
+      : { enabled: false, match: null };
+  } catch {
+    return { enabled: false, match: null };
+  }
+}
+
+export async function itemMenu(ev: MouseEvent, item: Item): Promise<void> {
   const entries: Parameters<typeof buildMenu>[2] = [
     { label: "打开", action: () => openItem(item) },
   ];
@@ -457,6 +519,35 @@ export function itemMenu(ev: MouseEvent, item: Item): void {
       label: "以管理方式运行",
       action: () => openItemAsAdmin(item),
     });
+  }
+  // 开机自启开关：可注册的条目查询当前状态后显示「添加/取消」
+  const startupCmd = startupCommandFor(item);
+  if (startupCmd) {
+    const { enabled, match } = await startupToggleState(startupCmd);
+    if (enabled && match) {
+      entries.push({
+        label: "取消开机自启",
+        action: () => {
+          confirmDanger(
+            `将取消「${item.name}」的开机自启（该启动项原本由快捷启动面板登记），确定？`,
+            () => {
+              void removeStartupItem(match.location, match.key)
+                .then(() => toast(`已取消「${item.name}」开机自启`))
+                .catch((e) => toast(String(e)));
+            },
+          );
+        },
+      });
+    } else {
+      entries.push({
+        label: "添加到开机自启",
+        action: () => {
+          void addStartupItem(item.name, startupCmd)
+            .then(() => toast(`已添加「${item.name}」到开机自启`))
+            .catch((e) => toast(String(e)));
+        },
+      });
+    }
   }
   entries.push(
     { label: "打开所在位置", action: () => revealItem(item) },
