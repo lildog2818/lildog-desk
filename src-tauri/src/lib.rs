@@ -1621,6 +1621,62 @@ fn open_target(target: String) -> Result<Option<String>, String> {
     Ok((actual != target).then_some(actual))
 }
 
+/// 以管理员身份打开目标（Windows UAC 提升）。与原打开逻辑一致：
+/// 原路径失效时先按同名在桌面/开始菜单中重新定位；返回实际使用的路径供前端回写。
+#[tauri::command]
+fn open_target_admin(target: String) -> Result<Option<String>, String> {
+    let mut actual = target.clone();
+    if !Path::new(&target).exists() {
+        match links::rediscover_shortcut(&target) {
+            Some(found) => actual = found,
+            None => {
+                return Err(format!(
+                    "目标已不存在，且未能在桌面/开始菜单中找到同名项：{target}"
+                ));
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        if actual.trim().is_empty() {
+            return Err("目标路径为空".into());
+        }
+        let wide_verb: Vec<u16> = std::ffi::OsStr::new("runas")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide: Vec<u16> = std::ffi::OsStr::new(&actual)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // runas 动词会触发 UAC 提升确认；用户取消时 ShellExecuteW 返回 1223
+        let hinst = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(wide_verb.as_ptr()),
+                PCWSTR(wide.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            )
+        };
+        let code = hinst.0 as isize;
+        if code <= 32 {
+            return Err(shell_open_error(code));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err("以管理员身份运行仅支持 Windows".into());
+    }
+    Ok((actual != target).then_some(actual))
+}
+
 /// 列出给定路径中已不存在的项（前端用于灰显失效条目）
 #[tauri::command]
 fn missing_targets(paths: Vec<String>) -> Vec<String> {
@@ -1824,13 +1880,14 @@ fn shell_open_error(code: isize) -> String {
         0 | 8 => "内存不足",
         2 => "文件不存在",
         3 => "路径不存在",
-        5 => "拒绝访问",
+        5 => "拒绝访问（或以管理员运行被用户取消）",
         11 => "可执行文件无效或损坏",
         26 => "发生共享冲突",
         27 => "文件关联信息不完整",
         28 | 29 | 30 => "动态数据交换失败",
         31 => "没有与之关联的应用",
         32 => "缺少依赖组件",
+        1223 => "操作已取消",
         _ => "打开失败",
     };
     format!("{msg}（错误码 {code}）")
@@ -2369,6 +2426,7 @@ pub fn run() {
             list_apps,
             get_icon,
             open_target,
+            open_target_admin,
             reveal_target,
             missing_targets,
             set_dock_bottom,

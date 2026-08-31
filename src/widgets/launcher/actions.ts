@@ -333,6 +333,26 @@ export function openItem(item: Item): void {
     });
 }
 
+/** 是否支持以管理员身份运行：应用快捷方式，或 .exe/.bat/.cmd 等可执行文件 */
+export function canRunAsAdmin(item: Item): boolean {
+  return (
+    item.kind === "app" || /\.(exe|bat|cmd)$/i.test(item.target.trim())
+  );
+}
+
+/** 以管理员身份打开（触发 UAC 提升确认） */
+export function openItemAsAdmin(item: Item): void {
+  void invoke<string | null>("open_target_admin", { target: item.target })
+    .then((resolved) => healTarget(item, resolved))
+    .catch((e) => {
+      if (String(e).includes("目标已不存在")) {
+        missingTargets.add(item.target.toLowerCase());
+        requestRender();
+      }
+      toast(String(e));
+    });
+}
+
 function revealItem(item: Item): void {
   void invoke<string | null>("reveal_target", { target: item.target })
     .then((resolved) => healTarget(item, resolved))
@@ -429,8 +449,16 @@ function editDialog(item: Item): void {
 }
 
 export function itemMenu(ev: MouseEvent, item: Item): void {
-  buildMenu(ev.clientX, ev.clientY, [
+  const entries: Parameters<typeof buildMenu>[2] = [
     { label: "打开", action: () => openItem(item) },
+  ];
+  if (canRunAsAdmin(item)) {
+    entries.push({
+      label: "以管理方式运行",
+      action: () => openItemAsAdmin(item),
+    });
+  }
+  entries.push(
     { label: "打开所在位置", action: () => revealItem(item) },
     { label: "编辑…", action: () => editDialog(item) },
     {
@@ -476,7 +504,8 @@ export function itemMenu(ev: MouseEvent, item: Item): void {
           requestRender();
         }),
     },
-  ]);
+  );
+  buildMenu(ev.clientX, ev.clientY, entries);
 }
 
 export function groupMenu(ev: MouseEvent, group: Group): void {

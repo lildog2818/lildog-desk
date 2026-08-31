@@ -255,11 +255,13 @@ function tileEl(item: Item): HTMLDivElement {
   label.className = "tile-label";
   label.textContent = item.name;
   label.title = missing
-    ? `${item.name}\n${item.target}\n（目标不存在，点击将自动查找）`
-    : item.target;
+    ? `${item.name}\n${item.target}\n（目标不存在，双击将自动查找）`
+    : `${item.target}\n（双击打开）`;
   tile.appendChild(label);
 
-  tile.onclick = () => {
+  // 单击仅用于选中视觉，双击才打开应用（避免拖动/误触时意外启动）
+  tile.onclick = () => {};
+  tile.ondblclick = () => {
     if (!didDrag) openItem(item);
   };
   tile.oncontextmenu = (ev) => {
