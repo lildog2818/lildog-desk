@@ -1,0 +1,188 @@
+/* ---- 番茄钟小组件 ---- */
+
+.pm-body {
+  --pm-c: #ff6347;
+  padding-top: 4px;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.pm-tabs {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pm-tab {
+  flex: 1;
+  max-width: 92px;
+  height: 28px;
+  border-radius: 9px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pm-tab:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.pm-tab.on {
+  background: linear-gradient(150deg, var(--pm-c), var(--pm-c));
+  border-color: transparent;
+  color: #fff;
+  font-weight: 650;
+  filter: brightness(0.92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.pm-ring-wrap {
+  position: relative;
+  width: 190px;
+  height: 190px;
+  margin: 0 auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pm-ring {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.pm-ring-bg,
+.pm-ring-fg {
+  fill: none;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.pm-ring-bg {
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 8;
+}
+
+.pm-ring-fg {
+  stroke: var(--pm-c);
+  transition: stroke-dashoffset 0.25s linear, stroke 0.3s ease;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--pm-c) 55%, transparent));
+}
+
+.pm-time {
+  position: relative;
+  font-size: calc(var(--fs-value) * 2.9);
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+  line-height: 1;
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+.pm-status {
+  position: absolute;
+  bottom: 30px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+.pm-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  min-height: 20px;
+  flex-shrink: 0;
+}
+
+.pm-dot {
+  font-size: calc(var(--fs-small) + 2.5px);
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.pm-dot.done {
+  color: var(--pm-c);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--pm-c) 65%, transparent));
+}
+
+.pm-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pm-start {
+  width: 132px;
+  height: 34px;
+  font-size: calc(var(--fs-ui) + 1.5px);
+  border-radius: 12px;
+  background: linear-gradient(150deg, var(--pm-c), color-mix(in srgb, var(--pm-c) 70%, #ff8a3d));
+  border: 1px solid transparent;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.pm-start:hover {
+  filter: brightness(1.12);
+}
+
+.pm-start.running {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--stroke-strong);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.pm-round {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-dim);
+  font-size: calc(var(--fs-ui) + 3px);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.pm-round:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+
+.pm-skip {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.pm-skip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.pm-footer {
+  flex-shrink: 0;
+}

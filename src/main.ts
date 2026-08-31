@@ -12,6 +12,7 @@ import "./widgets/launcher";
 import "./widgets/opencode-quota";
 import "./widgets/deepseek-balance";
 import "./widgets/memo";
+import "./widgets/pomodoro";
 import "./widgets/clipboard";
 import "./widgets/startup";
 
