@@ -311,6 +311,42 @@ async fn set_collapsed(
     Ok(())
 }
 
+/// 立即记录主窗口（控制台）的位置与大小，供下次启动恢复。
+/// 控制台在隐藏/退出前由前端显式调用一次，保证「关闭前后」的位置都被记下，
+/// 不依赖移动/缩放事件是否恰好触发延迟落盘。
+#[tauri::command]
+fn save_console_state(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("非法的窗口尺寸".into());
+    }
+    let dir = storage::data_dir(&app);
+    let mut s = storage::load_settings(&dir);
+    s.update_window("main", |st| {
+        st.x = Some(x);
+        st.y = Some(y);
+        // 过小视为脏数据，不覆盖已有记录
+        if width >= 320.0 && height >= 240.0 {
+            st.width = Some(width);
+            st.height = Some(height);
+        }
+    });
+    storage::save_settings(&dir, &s);
+    let state = app.state::<AppState>();
+    state.latest_pos.lock().unwrap().insert("main".into(), (x, y));
+    state
+        .latest_size
+        .lock()
+        .unwrap()
+        .insert("main".into(), (width, height));
+    Ok(())
+}
+
 #[tauri::command]
 fn set_bg_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     let v = opacity.clamp(0.0, 1.0);
@@ -2315,6 +2351,8 @@ fn toggle_widget_window_cmd(
 fn toggle_main_visible(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         if win.is_visible().unwrap_or(false) {
+            // 隐藏前记录位置与大小，托盘再打开仍回到原处
+            save_pos_now(app);
             let _ = win.hide();
         } else {
             let _ = win.show();
@@ -2408,6 +2446,7 @@ pub fn run() {
             load_widget_data,
             save_widget_data,
             get_window_state,
+            save_console_state,
             set_text_effect,
             set_font_sizes,
             set_size_step,
