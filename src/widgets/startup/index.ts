@@ -291,61 +291,71 @@ function disabledMenuEntries(
   ];
 }
 
-function rowEl(item: StartupItem, render: () => void): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "su-item";
-  row.title = `${item.name || item.key}\n${item.command}\n来源：${locationLabel(item.location)}`;
+/** 图标磁贴：图标在上、名称在下，居中排列。
+ * command 为空时不绘制真实图标，仅显示来源占位符（停用项）；
+ * 传入真实 location 保证文件夹项直接使用完整文件路径取图标（路径可能含空格）。
+ */
+function tileEl(
+  className: string,
+  title: string,
+  location: string,
+  command: string | null,
+  fallback: string,
+  name: string,
+  onMenu: (ev: MouseEvent) => void,
+): HTMLDivElement {
+  const tile = document.createElement("div");
+  tile.className = className;
+  tile.title = title;
 
   const icon = document.createElement("div");
   icon.className = "su-icon";
-  icon.textContent = fallbackEmoji(item.location);
-  void paintIcon(item, icon);
+  icon.textContent = fallback;
+  if (command) {
+    const pseudo: StartupItem = {
+      location,
+      key: "",
+      name,
+      command,
+    };
+    void paintIcon(pseudo, icon);
+  }
 
-  const main = document.createElement("div");
-  main.className = "su-main";
-  const name = document.createElement("div");
-  name.className = "su-name";
-  name.textContent = item.name || item.key;
-  main.appendChild(name);
+  const label = document.createElement("div");
+  label.className = "su-name";
+  label.textContent = name;
 
-  row.append(icon, main);
-  row.oncontextmenu = (ev) => {
+  tile.append(icon, label);
+  tile.oncontextmenu = (ev) => {
     ev.preventDefault();
     closeMenus();
-    buildMenu(ev.clientX, ev.clientY, itemMenuEntries(item, render));
+    onMenu(ev);
   };
-  return row;
+  return tile;
+}
+
+function rowEl(item: StartupItem, render: () => void): HTMLDivElement {
+  return tileEl(
+    "su-item",
+    `${item.name || item.key}\n${item.command}\n来源：${locationLabel(item.location)}`,
+    item.location,
+    item.command,
+    fallbackEmoji(item.location),
+    item.name || item.key,
+    (ev) => buildMenu(ev.clientX, ev.clientY, itemMenuEntries(item, render)),
+  );
 }
 
 function disabledRowEl(d: DisabledItem, render: () => void): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "su-item su-disabled";
-  row.title = `${d.name}\n${d.command}\n已停用（来源：${locationLabel(d.location)}）`;
-
-  const icon = document.createElement("div");
-  icon.className = "su-icon";
-  icon.textContent = "⏸";
-  const fallback = LOCATION_ICON[d.location];
-  if (fallback) icon.textContent = fallback;
-
-  const main = document.createElement("div");
-  main.className = "su-main";
-  const name = document.createElement("div");
-  name.className = "su-name";
-  name.textContent = d.name || d.key;
-  const badge = document.createElement("span");
-  badge.className = "su-badge";
-  badge.textContent = "已停用";
-  name.appendChild(badge);
-  main.appendChild(name);
-
-  row.append(icon, main);
-  row.oncontextmenu = (ev) => {
-    ev.preventDefault();
-    closeMenus();
-    buildMenu(ev.clientX, ev.clientY, disabledMenuEntries(d, render));
-  };
-  return row;
+  return tileEl(
+    "su-item su-disabled",
+    `${d.name}\n${d.command}\n已停用（来源：${locationLabel(d.location)}）`,
+    d.location,
+    null,
+    LOCATION_ICON[d.location] ?? "⏸",
+    d.name || d.key,
+    (ev) => buildMenu(ev.clientX, ev.clientY, disabledMenuEntries(d, render)),
+  );
 }
 
 function mountStartup(root: HTMLElement): () => void {
