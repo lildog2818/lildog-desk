@@ -2164,6 +2164,19 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let main_state = settings.window("main");
+    // 先恢复大小，再恢复位置：位置的 clamp 需要以最终尺寸计算，否则会用窗口创建时的默认尺寸（400×620）
+    // 误判边缘位置为越界，导致控制台每次重启都向左/向上偏移（而小组件因创建时已带正确尺寸不受影响）
+    let restore_w = match main_state.width {
+        Some(w) if w >= 320.0 => w,
+        _ => 400.0,
+    };
+    let restore_h = match main_state.height {
+        Some(h) if h >= 240.0 => h,
+        _ => 620.0,
+    };
+    let _ = win.set_size(LogicalSize::new(restore_w, restore_h));
+    // 让尺寸先生效，再以新尺寸为基准做边缘修正
+    std::thread::sleep(Duration::from_millis(12));
     if let (Some(x), Some(y)) = (main_state.x, main_state.y) {
         let (cx, cy) = clamp_fully_in_monitors(&win, x, y);
         let _ = win.set_position(PhysicalPosition::new(cx, cy));
@@ -2178,18 +2191,6 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .lock()
             .unwrap()
             .insert("main".into(), (pos.x, pos.y));
-    }
-    // 恢复主窗口（控制台）上次退出前的大小；过小视为脏数据回退默认
-    {
-        let w = match main_state.width {
-            Some(w) if w >= 320.0 => w,
-            _ => 400.0,
-        };
-        let h = match main_state.height {
-            Some(h) if h >= 240.0 => h,
-            _ => 620.0,
-        };
-        let _ = win.set_size(LogicalSize::new(w, h));
     }
     *app.state::<AppState>().glass_value.lock().unwrap() = settings.global_glass();
     *app.state::<AppState>().size_step.lock().unwrap() = settings.size_step();
