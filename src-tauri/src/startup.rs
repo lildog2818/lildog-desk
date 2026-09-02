@@ -73,9 +73,49 @@ pub async fn startup_restore(
 /// 从命令行解析出可执行文件路径（引号路径 + %VAR% 展开），供前端取图标/定位
 #[tauri::command]
 pub async fn startup_target_path(command: String) -> Result<String, String> {
+    // 优先尝试把 .lnk 解析为真实 exe，失败再回退到命令解析
+    #[cfg(target_os = "windows")]
+    {
+        let trimmed = command.trim();
+        if trimmed.to_lowercase().ends_with(".lnk") && std::path::Path::new(trimmed).is_file() {
+            if let Some(real) = imp::lnk_target_path(trimmed) {
+                return Ok(real);
+            }
+        }
+        // 非 .lnk 时若路径本身是可执行文件/快捷方式，直接返回
+        if !trimmed.starts_with('"')
+            && !trimmed.contains(' ')
+            && trimmed.to_lowercase().ends_with(".lnk")
+        {
+            if let Some(real) = imp::lnk_target_path(trimmed) {
+                return Ok(real);
+            }
+        }
+    }
     Ok(split_command(&command)
         .map(|(p, _)| p)
         .unwrap_or_default())
+}
+
+/// 批量解析图标源：为列表视图一次性返回每项的最佳图标路径（.lnk 目标优先，否则命令中的 exe）。
+#[tauri::command]
+pub async fn startup_icon_sources(commands: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(commands
+        .into_iter()
+        .map(|c| {
+            #[cfg(target_os = "windows")]
+            {
+                let trimmed = c.trim();
+                // 若是启动文件夹的 .lnk 文件路径，解 .lnk 取目标
+                if trimmed.to_lowercase().ends_with(".lnk") && std::path::Path::new(trimmed).is_file() {
+                    if let Some(real) = imp::lnk_target_path(trimmed) {
+                        return real;
+                    }
+                }
+            }
+            split_command(&c).map(|(p, _)| p).unwrap_or(c)
+        })
+        .collect())
 }
 
 /// 解析启动文件夹内 .lnk 的「有效目标命令」（exe 路径含引号 + 参数）。
@@ -147,10 +187,12 @@ pub(crate) fn split_command(cmd: &str) -> Option<(String, Option<String>)> {
         return None;
     }
     let (path, args) = if let Some(rest) = cmd.strip_prefix('"') {
-        let end = rest.find('"').map(|i| i + 1).unwrap_or(rest.len());
-        let quoted = &rest[..end];
-        let tail = rest[end..].trim();
-        (quoted, tail)
+        if let Some(i) = rest.find('"') {
+            (&rest[..i], rest[i + 1..].trim())
+        } else {
+            // 未闭合引号：整段视为路径（容错，避免丢弃）
+            (rest, "")
+        }
     } else {
         match cmd.find(char::is_whitespace) {
             Some(i) => (&cmd[..i], cmd[i..].trim()),
@@ -618,6 +660,25 @@ mod imp {
             }
             _ => Err("未知的启动项来源".into()),
         }
+    }
+
+    /// 解析 .lnk 指向的真实 exe 路径（不含参数），供图标提取使用
+    pub fn lnk_target_path(path: &str) -> Option<String> {
+        let p = Path::new(path);
+        let is_lnk = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase() == "lnk")
+            .unwrap_or(false);
+        if !p.is_file() || !is_lnk {
+            return None;
+        }
+        let lnk = parselnk::Lnk::try_from(p).ok()?;
+        crate::links::inner_target(
+            lnk.link_info.local_base_path.clone().filter(|s| !s.is_empty()),
+            lnk.link_info.common_path_suffix.clone(),
+            lnk.string_data.relative_path.clone(),
+            p,
+        )
     }
 
     /// 还原 .lnk 的「有效目标命令」：解析出的 exe 路径 + 原始参数。

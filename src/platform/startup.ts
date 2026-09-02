@@ -50,6 +50,10 @@ export const startupTargetPath = (command: string): Promise<string> =>
 export const startupLnkCommand = (path: string): Promise<string> =>
   invoke<string>("startup_lnk_command", { path });
 
+/** 批量取图标源路径（.lnk 会解出真实 exe） */
+export const startupIconSources = (commands: string[]): Promise<string[]> =>
+  invoke<string[]>("startup_icon_sources", { commands });
+
 export const STARTUP_LOCATION_LABEL: Record<string, string> = {
   "hkcu-run": "当前用户 · 注册表",
   "hklm-run": "所有用户 · 注册表",

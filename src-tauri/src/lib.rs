@@ -2491,6 +2491,7 @@ pub fn run() {
             startup::startup_edit,
             startup::startup_restore,
             startup::startup_target_path,
+            startup::startup_icon_sources,
             startup::startup_lnk_command
         ])
         .setup(setup)
