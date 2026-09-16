@@ -1,12 +1,26 @@
 /* ---- 番茄钟小组件 ---- */
 
-.pm-body {
-  --pm-c: #ff6347;
-  padding-top: 4px;
-  gap: 10px;
+/* body 的 padding 由 glass.css 的 #board 决定（ID 选择器优先级更高），
+   这里用 #board.pm-body 明确覆盖成番茄钟自己的间距。
+   注意：--pm-c/--pm-ripe/--pm-scale/--pm-fit 由脚本写在窗口根节点上，
+   这里不能再声明同名变量，否则会把继承下来的动态值遮蔽掉。 */
+#board.pm-body {
+  padding: 2px 12px 8px;
+  gap: 8px;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
+
+/* 窗口根节点上的番茄钟变量：脚本会用内联样式覆盖成实时值 */
+.pm-root {
+  --pm-c: #ff6347;
+  --pm-ripe: #7abe58;
+  --pm-scale: 0.62;
+  --pm-fit: 1;
+}
+
+/* ---- 模式切换 ---- */
 
 .pm-tabs {
   display: flex;
@@ -17,8 +31,8 @@
 
 .pm-tab {
   flex: 1;
-  max-width: 92px;
-  height: 28px;
+  max-width: 96px;
+  height: 27px;
   border-radius: 9px;
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.06);
@@ -34,87 +48,240 @@
 }
 
 .pm-tab.on {
-  background: linear-gradient(150deg, var(--pm-c), var(--pm-c));
+  background: var(--pm-c);
   border-color: transparent;
   color: #fff;
   font-weight: 650;
-  filter: brightness(0.92);
+  filter: brightness(0.94);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
 }
 
-.pm-ring-wrap {
+/* ---- 场景：生长环 + 小番茄 ---- */
+
+/* 场景：上排圆环、下排状态行，两者是正常文档流，不可能重叠 */
+.pm-stage {
   position: relative;
-  width: 190px;
-  height: 190px;
-  margin: 0 auto;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-height: 92px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  overflow: hidden;
 }
 
-.pm-ring {
-  position: absolute;
-  inset: 0;
-  transform: rotate(-90deg);
+/* 圆环是一个方形盒子，尺寸由脚本按可用空间算 */
+.pm-ringbox {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  flex-shrink: 0;
+}
+
+.pm-scene {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
 .pm-ring-bg,
 .pm-ring-fg {
   fill: none;
-  stroke-width: 9;
   stroke-linecap: round;
 }
 
 .pm-ring-bg {
-  stroke: rgba(255, 255, 255, 0.09);
-  stroke-width: 8;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 6;
 }
 
 .pm-ring-fg {
   stroke: var(--pm-c);
-  transition: stroke-dashoffset 0.25s linear, stroke 0.3s ease;
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--pm-c) 55%, transparent));
+  stroke-width: 7;
+  transition:
+    stroke-dashoffset 0.25s linear,
+    stroke 0.3s ease;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--pm-c) 55%, transparent));
 }
 
+/* 进度接近完成时圈本身做轻微脉冲，替代原来的角色表情 */
+[data-state="ripe"] .pm-ring-fg {
+  animation: pm-ring-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pm-ring-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 7px color-mix(in srgb, var(--pm-c) 55%, transparent));
+  }
+  50% {
+    filter: drop-shadow(0 0 13px color-mix(in srgb, var(--pm-c) 85%, transparent));
+  }
+}
+
+/* ---- 时间与状态 ---- */
+/* 数字绝对居中在圆环里；状态行是圆环下方的普通一行 */
+
 .pm-time {
-  position: relative;
-  font-size: calc(var(--fs-value) * 2.9);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--fs-value) * 2.5 * var(--pm-fit, 1));
   font-weight: 750;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   line-height: 1;
-  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  /* 时间必须单行 */
+  white-space: nowrap;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
+}
+
+.pm-time span,
+.pm-status span {
+  display: inline-block;
 }
 
 .pm-status {
-  position: absolute;
-  bottom: 30px;
-  left: 0;
-  right: 0;
+  max-width: 100%;
   text-align: center;
-  font-size: var(--fs-small);
+  /* 状态行是辅助文字，只随窗口轻微缩放——不跟随 --pm-fit（那是给大号数字用的，
+     最大可到 2 倍，会让状态行变得比正文还大） */
+  font-size: calc(var(--fs-small) * var(--pm-status-fit, 1));
   color: var(--text-dim);
-}
-
-.pm-dots {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  min-height: 20px;
+  white-space: nowrap;
+  line-height: 1.2;
   flex-shrink: 0;
 }
 
-.pm-dot {
-  font-size: calc(var(--fs-small) + 2.5px);
-  line-height: 1;
-  color: rgba(255, 255, 255, 0.28);
+.pm-status span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
-.pm-dot.done {
-  color: var(--pm-c);
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--pm-c) 65%, transparent));
+/* ---- 收获粒子（从圆环中心飞散） ---- */
+.pm-bit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: pm-fly var(--t, 0.9s) cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
 }
+
+@keyframes pm-fly {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.55) rotate(0deg);
+  }
+  to {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx, 0px)), calc(-50% + var(--dy, -40px)))
+      scale(1.05) rotate(var(--rz, 0deg));
+  }
+}
+
+/* ---- 任务标签（联动备忘录） ---- */
+
+.pm-task {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.pm-task-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px dashed var(--stroke-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pm-task.linked .pm-task-main {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--pm-c) 45%, transparent);
+  background: color-mix(in srgb, var(--pm-c) 12%, transparent);
+  color: var(--text);
+}
+
+.pm-task-main:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pm-task-ico {
+  flex-shrink: 0;
+  font-size: calc(var(--fs-ui) - 1px);
+}
+
+.pm-task-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pm-task-n {
+  flex-shrink: 0;
+  font-size: var(--fs-small);
+  color: var(--pm-c);
+  font-weight: 600;
+}
+
+.pm-task-done {
+  width: 28px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+  font-size: calc(var(--fs-ui) + 1px);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.pm-task-done:hover {
+  background: rgba(52, 211, 153, 0.2);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #d6ffe9;
+}
+
+.pm-task-done.hint {
+  animation: pm-pulse 2.4s ease-in-out infinite;
+}
+
+.pm-task-done.hidden {
+  display: none;
+}
+
+@keyframes pm-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.22);
+  }
+}
+
+/* ---- 控制按钮 ---- */
 
 .pm-controls {
   display: flex;
@@ -126,10 +293,14 @@
 
 .pm-start {
   width: 132px;
-  height: 34px;
+  height: 33px;
   font-size: calc(var(--fs-ui) + 1.5px);
   border-radius: 12px;
-  background: linear-gradient(150deg, var(--pm-c), color-mix(in srgb, var(--pm-c) 70%, #ff8a3d));
+  background: linear-gradient(
+    150deg,
+    var(--pm-c),
+    color-mix(in srgb, var(--pm-c) 70%, #ff8a3d)
+  );
   border: 1px solid transparent;
   color: #fff;
   font-weight: 700;
@@ -150,8 +321,8 @@
 }
 
 .pm-round {
-  width: 34px;
-  height: 34px;
+  width: 33px;
+  height: 33px;
   border-radius: 50%;
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.07);
@@ -168,8 +339,8 @@
 }
 
 .pm-skip {
-  height: 34px;
-  padding: 0 16px;
+  height: 33px;
+  padding: 0 15px;
   border-radius: 12px;
   border: 1px solid var(--stroke);
   background: transparent;
@@ -183,6 +354,530 @@
   color: var(--text);
 }
 
-.pm-footer {
+/* ---- 底部田地 ---- */
+
+/* 番茄钟的 #app 容器必须是"恰好一屏、内部不滚动"：
+   否则 glass.css 里 height:100vh + 边框/内容会溢出，底部田地会被窗口裁掉 */
+#app:has(.pm-body) {
+  height: 100%;
+  overflow: hidden;
+}
+
+.pm-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 12px 8px;
   flex-shrink: 0;
+  border-top: 1px dashed rgba(255, 255, 255, 0.14);
+  background: linear-gradient(
+    to top,
+    rgba(122, 84, 48, 0.22),
+    rgba(122, 84, 48, 0)
+  );
+}
+
+.pm-crops {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.pm-crop {
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.pm-crop.new {
+  animation: pm-drop 0.65s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.pm-crop.sprout {
+  font-size: 12px;
+  animation: pm-grow 2.2s ease-in-out infinite;
+}
+
+.pm-crop-more {
+  flex-shrink: 0;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+.pm-field-hint {
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pm-field-meta {
+  flex-shrink: 0;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+@keyframes pm-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.4) rotate(-25deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.15) rotate(4deg);
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes pm-grow {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.12);
+  }
+}
+
+/* ---- 浮层面板（任务选择 / 专注数据） ---- */
+
+.pm-sheet {
+  width: min(320px, calc(100vw - 22px));
+  max-height: calc(100vh - 30px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 12px;
+  border-radius: 15px;
+  background: rgba(32, 32, 46, 0.94);
+  border: 1px solid var(--stroke-strong);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 18px 52px rgba(0, 0, 0, 0.6);
+}
+
+.pm-sheet::-webkit-scrollbar {
+  width: 5px;
+}
+
+.pm-sheet::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.pm-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-title);
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+
+.pm-x {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.pm-x:hover {
+  background: var(--hover);
+  border-color: var(--stroke);
+  color: var(--text);
+}
+
+.pm-note {
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+/* 任务列表 */
+.pm-quick {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pm-quick input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  outline: none;
+}
+
+.pm-quick input:focus {
+  border-color: rgba(255, 184, 77, 0.5);
+}
+
+.pm-quick-add {
+  width: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: calc(var(--fs-ui) + 2px);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.pm-quick-add:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pm-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.pm-task-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.pm-task-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.pm-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pm-task-row:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.pm-task-row.on {
+  border-color: rgba(255, 184, 77, 0.5);
+  background: rgba(255, 184, 77, 0.14);
+}
+
+.pm-task-row.none {
+  justify-content: center;
+  color: var(--text-dim);
+  border-color: var(--stroke);
+  background: transparent;
+}
+
+.pm-task-row-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pm-task-row-n {
+  flex-shrink: 0;
+  font-size: var(--fs-small);
+  color: var(--pm-c, #ff6347);
+}
+
+.pm-empty {
+  padding: 10px 4px;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* 数据面板 */
+.pm-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.pm-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 4px 7px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--stroke);
+}
+
+.pm-kpi b {
+  font-size: calc(var(--fs-value) * 1.5);
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pm-kpi span {
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+.pm-goal {
+  margin-bottom: 12px;
+}
+
+.pm-goal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--fs-ui);
+  margin-bottom: 5px;
+}
+
+.pm-goal-val {
+  color: var(--accent);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pm-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.pm-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ff8a3d, #ffd166);
+  transition: width 0.4s ease;
+}
+
+.pm-mini {
+  margin-top: 7px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.pm-mini:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.pm-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 96px;
+  padding: 6px 2px 0;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.pm-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 3px;
+}
+
+.pm-col-num {
+  font-size: calc(var(--fs-small) - 1px);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-height: 11px;
+}
+
+.pm-col-track {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.pm-col-track i {
+  display: block;
+  width: 100%;
+  border-radius: 5px 5px 0 0;
+  background: linear-gradient(to top, #ff6347, #ffb84d);
+  transition: height 0.4s ease;
+}
+
+.pm-col-track i.zero {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pm-col.today .pm-col-track i {
+  background: linear-gradient(to top, #ff8a3d, #ffe08a);
+}
+
+.pm-col-lab {
+  font-size: calc(var(--fs-small) - 1px);
+  color: var(--text-dim);
+}
+
+.pm-col.today .pm-col-lab {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.pm-total {
+  text-align: center;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+/* 设置里的开关行 */
+.pm-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.pm-check input {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  accent-color: #ff8a3d;
+  cursor: pointer;
+}
+
+/* 窗口很矮时收紧字号，保证时间数字不被挤掉 */
+@media (max-height: 400px) {
+  .pm-time {
+    font-size: calc(var(--fs-value) * 1.8 * var(--pm-fit, 1));
+  }
+
+  .pm-tab {
+    height: 25px;
+  }
+
+  /* 矮窗口里按钮行也要收紧，否则会把圆环压扁 */
+  .pm-start,
+  .pm-round,
+  .pm-skip {
+    height: 30px;
+  }
+
+  .pm-task-main,
+  .pm-task-done {
+    height: 26px;
+  }
+}
+
+/* ---- 矮窗口逐级收紧（类由脚本按真实视口高设置） ---- */
+/* pm-tight：< 440px；pm-tighter：< 390px。圆环尺寸由脚本按视口算，
+   这里只压缩周边留白，保证圆环不会被 flex 压扁到与文字/按钮重叠。 */
+.pm-tight #header {
+  padding: 6px 10px 2px;
+}
+
+.pm-tight #board.pm-body {
+  padding: 0 12px 4px;
+  gap: 5px;
+}
+
+.pm-tight .pm-tabs {
+  flex-shrink: 0;
+}
+
+.pm-tight .pm-tab {
+  height: 24px;
+}
+
+.pm-tight .pm-start,
+.pm-tight .pm-round,
+.pm-tight .pm-skip {
+  height: 29px;
+}
+
+.pm-tight .pm-task-main,
+.pm-tight .pm-task-done {
+  height: 25px;
+}
+
+.pm-tight .pm-field {
+  min-height: 24px;
+  padding: 3px 12px 5px;
+}
+
+.pm-tight .pm-crops {
+  font-size: 12px;
+}
+
+.pm-tighter #header {
+  padding: 4px 10px 0;
+}
+
+.pm-tighter #board.pm-body {
+  gap: 3px;
+}
+
+.pm-tighter .pm-tab {
+  height: 22px;
+}
+
+.pm-tighter .pm-start,
+.pm-tighter .pm-round,
+.pm-tighter .pm-skip {
+  height: 26px;
+}
+
+.pm-tighter .pm-task-main,
+.pm-tighter .pm-task-done {
+  height: 23px;
+}
+
+.pm-tighter .pm-field {
+  min-height: 21px;
+  padding: 2px 12px 4px;
+  font-size: calc(var(--fs-small) - 1px);
+}
+
+.pm-tighter .pm-time {
+  font-size: calc(var(--fs-value) * 1.75 * var(--pm-fit, 1));
 }

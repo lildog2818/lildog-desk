@@ -1,7 +1,11 @@
 import { getWindowState, setPinned } from "../../platform/winstate";
 import { registerWidget } from "../../platform/registry";
 import { toast } from "../../platform/shell";
-import { widgetLoad, widgetSave } from "../../platform/widget-data";
+import {
+  onWidgetDataChanged,
+  widgetLoad,
+  widgetSave,
+} from "../../platform/widget-data";
 import { buildWidgetShell } from "../quota-shared";
 import "./../../styles/memo.css";
 
@@ -115,19 +119,29 @@ function mountMemo(root: HTMLElement): () => void {
     }
   }
 
-  void widgetLoad<MemoData>("memo", { ...DEFAULT_DATA }).then((d) => {
-    data = {
-      items: Array.isArray(d.items)
-        ? d.items.filter(
-            (i): i is MemoItem =>
-              typeof i?.id === "string" &&
-              typeof i?.text === "string" &&
-              typeof i?.done === "boolean",
-          )
-        : [],
-    };
-    render();
+  function load(): void {
+    void widgetLoad<MemoData>("memo", { ...DEFAULT_DATA }).then((d) => {
+      data = {
+        items: Array.isArray(d.items)
+          ? d.items.filter(
+              (i): i is MemoItem =>
+                typeof i?.id === "string" &&
+                typeof i?.text === "string" &&
+                typeof i?.done === "boolean",
+            )
+          : [],
+      };
+      render();
+    });
+  }
+
+  // 其它窗口（如番茄钟勾掉任务）改写了备忘录数据：丢弃本地待写入的旧状态，重新读取
+  const stopWatch = onWidgetDataChanged("memo", () => {
+    window.clearTimeout(saveTimer);
+    load();
   });
+
+  load();
 
   // 固定状态与快捷启动一致
   const pinBtn = shell.btnPin;
@@ -147,6 +161,7 @@ function mountMemo(root: HTMLElement): () => void {
   render();
 
   return () => {
+    stopWatch();
     window.clearTimeout(saveTimer);
   };
 }

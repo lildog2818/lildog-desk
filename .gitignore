@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.preview-dist/
 src-tauri/target/
 src-tauri/target-rel/
 src-tauri/gen/

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>番茄钟预览</title>
+    <script>
+      // 场景与种子数据：在模块脚本之前执行，供 Tauri 桩读取
+      (function () {
+        var q = new URLSearchParams(location.search);
+        var scene = q.get("scene") || "idle";
+        var now = Date.now();
+        function key(offset) {
+          var d = new Date();
+          d.setHours(12, 0, 0, 0);
+          d.setDate(d.getDate() + offset);
+          var p = function (v) {
+            return String(v).padStart(2, "0");
+          };
+          return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+        }
+        var today = key(0);
+        var pomo = {
+          focusMin: 25,
+          shortMin: 5,
+          longMin: 15,
+          longEvery: 4,
+          mode: "focus",
+          running: false,
+          endAt: null,
+          remaining: 1500,
+          cycle: 0,
+          date: today,
+          todayCount: 0,
+          history: {},
+          totalCount: 0,
+          totalFocusSec: 0,
+          weekGoal: 20,
+          taskId: null,
+          taskText: "",
+          taskSpent: {},
+          sound: false,
+          celebrate: true,
+        };
+        var memo = { items: [] };
+
+        // counts：6 天前 → 今天
+        function seed(counts) {
+          counts.forEach(function (c, i) {
+            if (!c) return;
+            pomo.history[key(i - 6)] = { count: c, focusSec: c * 1500 };
+            pomo.totalCount += c;
+            pomo.totalFocusSec += c * 1500;
+          });
+        }
+        function todayCount(n) {
+          pomo.todayCount = n;
+          pomo.history[today] = { count: n, focusSec: n * 1500 };
+        }
+        var MEMO = [
+          { id: "m1", text: "写完番茄钟改版方案", done: false },
+          { id: "m2", text: "回邮件：季度复盘材料", done: false },
+          { id: "m3", text: "把 v1.5 的发布说明补上", done: false },
+          { id: "m4", text: "拆一下下周的排期", done: false },
+          { id: "m5", text: "整理桌面截图素材", done: true },
+        ];
+
+        } else if (scene === "legacy" || scene === "legacy-stats") {
+          // 老版本数据格式：没有 history/totalCount/任务标签/开关等字段，用于验证升级迁移
+          pomo = {
+            focusMin: 25,
+            shortMin: 5,
+            longMin: 15,
+            longEvery: 4,
+            mode: "focus",
+            running: false,
+            endAt: null,
+            remaining: 1500,
+            cycle: 2,
+            date: today,
+            todayCount: 3,
+          };
+        } else if (scene === "paused") {
+          // 暂停中：状态行文案最长（"已暂停 · 点继续回到「专注」"），最容易压到数字与圆环
+          pomo.running = false;
+          pomo.remaining = 1153;
+          pomo.cycle = 2;
+          todayCount(2);
+        } else if (scene === "focus") {
+          pomo.running = true;
+          pomo.endAt = now + 872000;
+          pomo.remaining = 872;
+          pomo.cycle = 1;
+          todayCount(1);
+        } else if (scene === "ripe") {
+          pomo.running = true;
+          pomo.endAt = now + 42000;
+          pomo.remaining = 42;
+          pomo.cycle = 3;
+          todayCount(3);
+        } else if (scene === "harvest") {
+          // 让当前这颗在 1.2 秒后自然到点：触发收获庆祝
+          pomo.running = true;
+          pomo.endAt = now + 1200;
+          pomo.remaining = 1;
+          pomo.cycle = 1;
+          todayCount(1);
+          pomo.taskId = "m1";
+          pomo.taskText = MEMO[0].text;
+          pomo.taskSpent = { m1: 1 };
+          memo = { items: MEMO };
+        } else if (scene === "half") {
+          pomo.running = true;
+          pomo.endAt = now + 750000;
+          pomo.remaining = 750;
+          pomo.cycle = 2;
+          todayCount(2);
+        } else if (scene === "rest") {
+          pomo.mode = "short";
+          pomo.running = true;
+          pomo.endAt = now + 271000;
+          pomo.remaining = 271;
+          pomo.cycle = 2;
+          todayCount(2);
+        } else if (scene === "longrest") {
+          pomo.mode = "long";
+          pomo.remaining = 900;
+          pomo.cycle = 4;
+          todayCount(4);
+        } else if (scene === "task") {
+          pomo.running = true;
+          pomo.endAt = now + 872000;
+          pomo.remaining = 872;
+          pomo.cycle = 1;
+          todayCount(2);
+          pomo.taskId = "m1";
+          pomo.taskText = MEMO[0].text;
+          pomo.taskSpent = { m1: 2 };
+          memo = { items: MEMO };
+        } else if (scene === "stats") {
+          seed([3, 5, 2, 0, 6, 4, 3]);
+          pomo.todayCount = 3;
+          pomo.cycle = 3;
+        } else if (scene === "picker" || scene === "nomemo") {
+          pomo.taskId = scene === "picker" ? "m1" : null;
+          pomo.taskText = scene === "picker" ? MEMO[0].text : "";
+          pomo.taskSpent = { m1: 2, m2: 1 };
+          todayCount(2);
+          memo = { items: scene === "picker" ? MEMO : [] };
+        } else if (scene === "full") {
+          seed([6, 8, 5, 7, 9, 6, 12]);
+          pomo.todayCount = 12;
+          pomo.cycle = 4;
+        }
+
+        window.__PREVIEW_SCENE__ = scene;
+        window.__PREVIEW_STORE__ = { pomodoro: pomo, memo: memo };
+      })();
+    </script>
+    <style>
+      /* 模拟桌面壁纸，便于判断玻璃面板在复杂背景上的可读性 */
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background:
+          radial-gradient(90% 70% at 12% 8%, #4b3f7a 0%, transparent 60%),
+          radial-gradient(80% 60% at 90% 92%, #1f6b63 0%, transparent 62%),
+          linear-gradient(140deg, #22243a, #14202c 60%, #2a1f33);
+      }
+      /* 固定尺寸的“窗口”：尺寸完全由 CSS 决定，不受浏览器 DPI 影响。
+         transform 让 position:fixed 的浮层以本框为包含块。 */
+      #app.pm-window {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        height: auto;
+        transform: translateZ(0);
+      }
+      /* 拼图模式：一页并排渲染多个尺寸，用一张截图核对所有窗口大小 */
+      #grid {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 14px;
+        width: 1520px;
+      }
+      .pm-cell {
+        position: relative;
+        height: auto;
+        flex-shrink: 0;
+      }
+      .pm-cell::after {
+        content: attr(data-size);
+        position: absolute;
+        left: 1px;
+        top: 1px;
+        z-index: 60;
+        font: 10px/1.5 monospace;
+        color: #9f9;
+        background: #000c;
+        padding: 0 4px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app" class="pm-window"></div>
+    <div id="grid"></div>
+    <script type="module" src="./preview.ts"></script>
+  </body>
+</html>
